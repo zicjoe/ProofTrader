@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum IntentStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+  SUBMITTED
+  FAILED
+}
+
+enum TradeStatus {
+  Open
+  Closed
+  Cancelled
+}
+
+enum PositionSide {
+  LONG
+  SHORT
+}
+
+enum LogLevel {
+  info
+  warning
+  error
+  success
+}
+
+enum JobState {
+  Running
+  Completed
+  Failed
+}
+
+model Workspace {
+  id         String             @id @default(cuid())
+  slug       String             @unique
+  name       String
+  snapshot   WorkspaceSnapshot?
+  intents    TradeIntent[]
+  trades     TradeExecution[]
+  positions  Position[]
+  artifacts  ValidationArtifact[]
+  logs       LogEntry[]
+  jobs       JobRun[]
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+}
+
+model WorkspaceSnapshot {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique
+  data        Json
+  generatedAt DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model TradeIntent {
+  id            String       @id
+  workspaceId   String
+  symbol        String
+  side          PositionSide
+  size          Float
+  orderType     String
+  limitPrice    Float?
+  stopLoss      Float?
+  takeProfit    Float?
+  status        IntentStatus
+  blockReason   String?
+  riskScore     Float?
+  signalSummary String
+  riskSummary   String
+  strategy      String
+  payload       Json?
+  response      Json?
+  createdAt     DateTime     @default(now())
+  decidedAt     DateTime?
+  updatedAt     DateTime     @updatedAt
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  trade         TradeExecution?
+
+  @@index([workspaceId, status, createdAt])
+}
+
+model TradeExecution {
+  id              String             @id
+  workspaceId     String
+  intentId        String?            @unique
+  exchangeOrderId String
+  symbol          String
+  side            PositionSide
+  size            Float
+  entryPrice      Float
+  exitPrice       Float?
+  stopLoss        Float?
+  takeProfit      Float?
+  status          TradeStatus
+  openedAt        DateTime
+  closedAt        DateTime?
+  realizedPnL     Float              @default(0)
+  unrealizedPnL   Float              @default(0)
+  fees            Float              @default(0)
+  strategy        String
+  signalSummary   String
+  riskSummary     String
+  artifactId      String?
+  rawResponse     Json?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  intent          TradeIntent?       @relation(fields: [intentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, openedAt])
+}
+
+model Position {
+  id                    String       @id
+  workspaceId           String
+  linkedTradeId         String?
+  symbol                String
+  side                  PositionSide
+  size                  Float
+  entryPrice            Float
+  currentPrice          Float
+  stopLoss              Float?
+  takeProfit            Float?
+  unrealizedPnL         Float
+  unrealizedPnLPercent  Float
+  collateral            Float
+  leverage              Float
+  liquidationPrice      Float?
+  openedAt              DateTime
+  riskScore             Float
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  workspace             Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, openedAt])
+}
+
+model ValidationArtifact {
+  id               String          @id
+  workspaceId      String
+  tradeId          String?
+  type             String
+  intentHash       String
+  signatureStatus  String
+  checkpointStatus String
+  onchainReference String?
+  validatorStatus  String
+  riskCheckId      String?
+  payload          Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  workspace        Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+}
+
+model LogEntry {
+  id          String    @id
+  workspaceId String
+  stream      String
+  level       LogLevel
+  message     String
+  details     Json?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, stream, createdAt])
+}
+
+model JobRun {
+  id          String    @id
+  workspaceId String
+  type        String
+  status      JobState
+  progress    Int
+  startedAt   DateTime
+  completedAt DateTime?
+  payload     Json?
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, startedAt])
+}

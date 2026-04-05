@@ -1,0 +1,11 @@
+node_modules
+.env
+.env.local
+.dist
+coverage
+*.log
+apps/web/dist
+apps/api/dist
+apps/.env
+.env.example
+apps/api/generated

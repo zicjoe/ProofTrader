@@ -1,0 +1,30 @@
+{
+  "name": "@prooftrader/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run db:generate && tsx watch src/index.ts",
+    "build": "npm run db:generate && tsc -p tsconfig.json",
+    "db:generate": "prisma generate --config ../../prisma.config.ts",
+    "db:push": "prisma db push --config ../../prisma.config.ts",
+    "db:migrate": "prisma migrate dev --config ../../prisma.config.ts --name init",
+    "db:studio": "prisma studio --config ../../prisma.config.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@prisma/adapter-pg": "^7.0.0",
+    "@prisma/client": "^7.0.0",
+    "@prooftrader/shared": "0.1.0",
+    "dotenv": "^16.6.1",
+    "fastify": "^5.6.1",
+    "pg": "^8.16.3",
+    "viem": "^2.38.2"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5",
+    "prisma": "^7.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  }
+}
