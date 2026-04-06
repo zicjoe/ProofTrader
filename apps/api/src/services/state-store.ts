@@ -17,6 +17,7 @@ import type {
 } from "@prooftrader/shared";
 import { seedSnapshot } from "@prooftrader/shared";
 import { prisma } from "../lib/prisma.js";
+import { Prisma, prisma } from "../../generated/prisma/client.js";
 import { buildValidationRequestPayload } from "./erc8004.service.js";
 import { krakenCliService } from "./kraken-cli.service.js";
 import type { DepthMetrics, OhlcCandle } from "./kraken-cli.service.js";
@@ -1535,7 +1536,7 @@ class StateStore {
         onchainReference: artifact.onchainReference,
         validatorStatus: artifact.validatorStatus,
         riskCheckId: artifact.riskCheckId,
-        payload: null,
+        payload: Prisma.DbNull,
         createdAt: asDate(artifact.createdAt) ?? new Date()
       })),
       skipDuplicates: true
@@ -1574,7 +1575,7 @@ class StateStore {
           progress: job.progress,
           startedAt: new Date(job.startedAt),
           completedAt: job.status === "Completed" || job.status === "Failed" ? new Date(job.startedAt) : null,
-          payload: null
+          payload: Prisma.DbNull,
         })),
         skipDuplicates: true
       });
