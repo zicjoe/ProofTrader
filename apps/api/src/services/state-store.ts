@@ -17,7 +17,7 @@ import type {
 } from "@prooftrader/shared";
 import { seedSnapshot } from "@prooftrader/shared";
 import { prisma } from "../lib/prisma.js";
-import { Prisma, prisma } from "../../generated/prisma/client.js";
+import { Prisma } from "../../generated/prisma/client";
 import { buildValidationRequestPayload } from "./erc8004.service.js";
 import { krakenCliService } from "./kraken-cli.service.js";
 import type { DepthMetrics, OhlcCandle } from "./kraken-cli.service.js";
