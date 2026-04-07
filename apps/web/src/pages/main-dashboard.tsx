@@ -156,7 +156,7 @@ export function MainDashboard() {
                     <LineChart data={chartData}>
                       <XAxis dataKey="date" hide />
                       <YAxis hide domain={["auto", "auto"]} />
-                      <Tooltip formatter={(value: number) => [formatCurrency(value), mode.mode === "futures" ? "Futures Equity" : "Spot Equity"]} />
+                      <Tooltip formatter={(value) => [formatCurrency(Number(value ?? 0)), mode.mode === "futures" ? "Futures Equity" : "Spot Equity"]} />
                       <Line type="monotone" dataKey="value" stroke={mode.mode === "futures" ? "#60a5fa" : "#34d399"} strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
@@ -219,7 +219,7 @@ export function MainDashboard() {
               <AreaChart data={dashboard.equityCurve}>
                 <XAxis dataKey="date" stroke="#71717a" />
                 <YAxis stroke="#71717a" tickFormatter={(value) => `$${Math.round(value / 1000)}k`} />
-                <Tooltip formatter={(value: number) => [formatCurrency(value), "Equity"]} />
+                <Tooltip formatter={(value) => [formatCurrency(Number(value ?? 0)), "Equity"]} />
                 <Area type="monotone" dataKey="value" stroke="#60a5fa" fill="#1d4ed8" fillOpacity={0.24} />
               </AreaChart>
             </ResponsiveContainer>
