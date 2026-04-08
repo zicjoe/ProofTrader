@@ -94,7 +94,7 @@ export class KrakenCliService {
   private useWsl = String(process.env.KRAKEN_CLI_USE_WSL).toLowerCase() === "true";
   private binary = process.env.KRAKEN_CLI_PATH || "kraken";
   private wslBinary = process.env.KRAKEN_WSL_PATH || "C:\\Windows\\System32\\wsl.exe";
-  private runnerUrl = (process.env.KRAKEN_RUNNER_URL || "").trim().replace(/\\/$/, "");
+  private runnerUrl = (process.env.KRAKEN_RUNNER_URL || "").trim().replace(/\/$/, "");
   
   private async run(args: string[]) {
     const command = this.useWsl ? this.wslBinary : this.binary;
