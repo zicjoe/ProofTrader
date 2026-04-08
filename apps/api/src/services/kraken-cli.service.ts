@@ -94,7 +94,8 @@ export class KrakenCliService {
   private useWsl = String(process.env.KRAKEN_CLI_USE_WSL).toLowerCase() === "true";
   private binary = process.env.KRAKEN_CLI_PATH || "kraken";
   private wslBinary = process.env.KRAKEN_WSL_PATH || "C:\\Windows\\System32\\wsl.exe";
-
+  private runnerUrl = (process.env.KRAKEN_RUNNER_URL || "").trim().replace(/\\/$/, "");
+  
   private async run(args: string[]) {
     const command = this.useWsl ? this.wslBinary : this.binary;
     const commandArgs = this.useWsl ? [this.binary, ...args] : args;
@@ -140,6 +141,42 @@ export class KrakenCliService {
     if (normalized === "SOLUSD") return "PF_SOLUSD";
     if (normalized.endsWith("USD")) return `PF_${normalized.replace(/^BTC/, "XBT")}`;
     return normalized.startsWith("PF_") ? normalized : `PF_${normalized}`;
+  }
+
+  private usingRunner() {
+    return this.runnerUrl.length > 0;
+  }
+
+  private async requestRunner<T = unknown>(path: string, options?: { method?: "GET" | "POST"; body?: unknown }) {
+    if (!this.usingRunner()) {
+      throw new Error("Kraken runner URL is not configured.");
+    }
+
+    const method = options?.method ?? "GET";
+    const response = await fetch(`${this.runnerUrl}${path}`, {
+      method,
+      headers: method === "POST" ? { "content-type": "application/json" } : undefined,
+      body: method === "POST" && options?.body !== undefined ? JSON.stringify(options.body) : undefined
+    });
+
+    const text = await response.text();
+    let payload: unknown = null;
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
+    }
+
+    if (!response.ok) {
+      const message = typeof payload === "object" && payload && "message" in (payload as Record<string, unknown>)
+        ? String((payload as Record<string, unknown>).message)
+        : `Kraken runner returned ${response.status}`;
+      throw new Error(message);
+    }
+
+    return payload as T;
   }
 
   private maybeMock(value: unknown) {
@@ -239,6 +276,9 @@ export class KrakenCliService {
   }
 
   async status() {
+    if (this.usingRunner()) {
+      return this.requestRunner("/health");
+    }
     const mock = this.maybeMock({ mode: "mock", connected: true, message: "Kraken CLI mock mode enabled." });
     if (mock) return mock;
     return this.run(["status", "-o", "json"]);
@@ -246,6 +286,9 @@ export class KrakenCliService {
 
   async ticker(symbol: string) {
     const pair = this.normalizeSymbol(symbol);
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/market/ticker?symbol=${encodeURIComponent(pair)}`);
+    }
     const mock = this.maybeMock({ mode: "mock", [pair]: { c: ["65000.00"], a: ["65005.00"], b: ["64995.00"] } });
     if (mock) return mock;
     return this.run(["ticker", pair, "-o", "json"]);
@@ -253,6 +296,9 @@ export class KrakenCliService {
 
   async ohlc(symbol: string, interval = 5) {
     const pair = this.resolveRestPair(symbol);
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/market/ohlc?symbol=${encodeURIComponent(pair)}&interval=${interval}`);
+    }
     const mock = this.maybeMock({ result: { [pair]: [] } });
     if (mock) return mock;
     return this.publicGet("OHLC", { pair, interval });
@@ -260,12 +306,21 @@ export class KrakenCliService {
 
   async depth(symbol: string, count = 10) {
     const pair = this.resolveRestPair(symbol);
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/market/depth?symbol=${encodeURIComponent(pair)}&count=${count}`);
+    }
     const mock = this.maybeMock({ result: { [pair]: { asks: [], bids: [] } } });
     if (mock) return mock;
     return this.publicGet("Depth", { pair, count });
   }
 
   async initPaper(balance = 10_000, currency = "USD", mode: ExchangeAccountMode = "spot") {
+    if (this.usingRunner()) {
+      return this.requestRunner("/v1/paper/init", {
+        method: "POST",
+        body: { balance, currency, mode }
+      });
+    }
     const mock = this.maybeMock({ mode: "mock", balance, currency, initialized: true, accountMode: mode });
     if (mock) return mock;
 
@@ -293,6 +348,9 @@ ${processError.message ?? ""}`.toLowerCase();
   }
 
   async paperStatus(mode: ExchangeAccountMode = "spot") {
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/paper/status?mode=${encodeURIComponent(mode)}`);
+    }
     const mock = this.maybeMock({
       mode: "mock",
       accountMode: mode,
@@ -309,6 +367,9 @@ ${processError.message ?? ""}`.toLowerCase();
   }
 
   async paperHistory(mode: ExchangeAccountMode = "spot") {
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/paper/history?mode=${encodeURIComponent(mode)}`);
+    }
     const mock = this.maybeMock({
       mode: "mock",
       accountMode: mode,
@@ -332,12 +393,18 @@ ${processError.message ?? ""}`.toLowerCase();
   }
 
   async paperBalance(mode: ExchangeAccountMode = "spot") {
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/paper/balance?mode=${encodeURIComponent(mode)}`);
+    }
     const mock = this.maybeMock({ mode: "mock", accountMode: mode, balances: { USD: { total: 10_000, available: 10_000, reserved: 0 } } });
     if (mock) return mock;
     return this.run(mode === "futures" ? ["futures", "paper", "balance", "-o", "json"] : ["paper", "balance", "-o", "json"]);
   }
 
   async paperPositions() {
+    if (this.usingRunner()) {
+      return this.requestRunner(`/v1/paper/positions`);
+    }
     const mock = this.maybeMock({ mode: "mock", positions: [] });
     if (mock) return mock;
     return this.run(["futures", "paper", "positions", "-o", "json"]);
@@ -399,6 +466,13 @@ ${processError.message ?? ""}`.toLowerCase();
   }
 
   async submitPaperOrder(input: PaperOrderInput) {
+    if (this.usingRunner()) {
+      return this.requestRunner("/v1/paper/order", {
+        method: "POST",
+        body: input
+      });
+    }
+
     const mode = input.mode ?? "spot";
     if (mode === "futures") {
       if (input.side === "LONG") {
