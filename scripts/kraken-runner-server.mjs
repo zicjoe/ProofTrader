@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const PORT = Number(process.env.PORT || 4011);
+let paperQueue = Promise.resolve();
 const BINARY = process.env.KRAKEN_CLI_PATH || "kraken";
 const enabled = String(process.env.KRAKEN_CLI_ENABLED).toLowerCase() === "true";
 
@@ -16,17 +17,31 @@ async function runCli(args) {
   if (!enabled) {
     throw new Error("Kraken CLI is disabled on the runner.");
   }
-  const { stdout, stderr } = await execFileAsync(BINARY, args, {
-    env: process.env,
-    timeout: 30000,
-    maxBuffer: 4 * 1024 * 1024
-  });
-  const output = (stdout || stderr || "").trim();
   try {
-    return JSON.parse(output);
-  } catch {
-    return { raw: output };
+    const { stdout, stderr } = await execFileAsync(BINARY, args, {
+      env: process.env,
+      timeout: 30000,
+      maxBuffer: 4 * 1024 * 1024
+    });
+    const output = (stdout || stderr || "").trim();
+    try {
+      return JSON.parse(output);
+    } catch {
+      return { raw: output };
+    }
+  } catch (error) {
+    const processError = error;
+    const output = `${processError.stdout ?? ""}
+${processError.stderr ?? ""}
+${processError.message ?? ""}`.trim();
+    throw new Error(output || "Kraken CLI command failed.");
   }
+}
+
+function runPaperCli(args) {
+  const next = paperQueue.then(() => runCli(args));
+  paperQueue = next.then(() => undefined, () => undefined);
+  return next;
 }
 
 async function readBody(req) {
@@ -76,26 +91,29 @@ const server = createServer(async (req, res) => {
       const balance = Number(body.balance ?? 10000);
       const mode = body.mode === "futures" ? "futures" : "spot";
       const args = mode === "futures" ? ["futures", "paper", "init", "--balance", String(balance), "-o", "json"] : ["paper", "init", "--balance", String(balance), "-o", "json"];
-      return sendJson(res, 200, await runCli(args));
+      return sendJson(res, 200, await runPaperCli(args));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/paper/status") {
       const mode = url.searchParams.get("mode") === "futures" ? "futures" : "spot";
-      return sendJson(res, 200, await runCli(modeArgs(mode, "status")));
+      return sendJson(res, 200, await runPaperCli(modeArgs(mode, "status")));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/paper/history") {
       const mode = url.searchParams.get("mode") === "futures" ? "futures" : "spot";
-      return sendJson(res, 200, await runCli(modeArgs(mode, "history")));
+      if (mode === "futures") {
+        return sendJson(res, 200, { history: [] });
+      }
+      return sendJson(res, 200, await runPaperCli(["paper", "history", "-o", "json"]));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/paper/balance") {
       const mode = url.searchParams.get("mode") === "futures" ? "futures" : "spot";
-      return sendJson(res, 200, await runCli(modeArgs(mode, "balance")));
+      return sendJson(res, 200, await runPaperCli(modeArgs(mode, "status")));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/paper/positions") {
-      return sendJson(res, 200, await runCli(["futures", "paper", "positions", "-o", "json"]));
+      return sendJson(res, 200, await runPaperCli(["futures", "paper", "positions", "-o", "json"]));
     }
 
     if (req.method === "POST" && url.pathname === "/v1/paper/order") {
@@ -123,7 +141,7 @@ const server = createServer(async (req, res) => {
         args.push("--price", String(body.limitPrice));
       }
       args.push("-o", "json");
-      return sendJson(res, 200, await runCli(args));
+      return sendJson(res, 200, await runPaperCli(args));
     }
 
     return sendJson(res, 404, { ok: false, message: "Not found" });

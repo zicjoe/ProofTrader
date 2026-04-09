@@ -389,7 +389,8 @@ ${processError.message ?? ""}`.toLowerCase();
       ]
     });
     if (mock) return mock;
-    return this.run(mode === "futures" ? ["futures", "paper", "history", "-o", "json"] : ["paper", "history", "-o", "json"]);
+    if (mode === "futures") return { history: [] };
+    return this.run(["paper", "history", "-o", "json"]);
   }
 
   async paperBalance(mode: ExchangeAccountMode = "spot") {
@@ -398,7 +399,7 @@ ${processError.message ?? ""}`.toLowerCase();
     }
     const mock = this.maybeMock({ mode: "mock", accountMode: mode, balances: { USD: { total: 10_000, available: 10_000, reserved: 0 } } });
     if (mock) return mock;
-    return this.run(mode === "futures" ? ["futures", "paper", "balance", "-o", "json"] : ["paper", "balance", "-o", "json"]);
+    return this.run(mode === "futures" ? ["futures", "paper", "status", "-o", "json"] : ["paper", "status", "-o", "json"]);
   }
 
   async paperPositions() {
