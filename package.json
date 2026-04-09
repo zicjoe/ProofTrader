@@ -9,7 +9,6 @@
     "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
     "dev:web": "npm run build --workspace @prooftrader/shared && npm run dev --workspace @prooftrader/web",
     "dev:api": "npm run build --workspace @prooftrader/shared && npm run dev --workspace @prooftrader/api",
-    "start:api": "npm run build --workspace @prooftrader/shared && npm run build --workspace @prooftrader/api && node apps/api/dist/index.js",
     "build": "npm run build --workspace @prooftrader/shared && npm run build --workspace @prooftrader/api && npm run build --workspace @prooftrader/web",
     "db:generate": "npm run db:generate --workspace @prooftrader/api",
     "db:push": "npm run db:push --workspace @prooftrader/api",

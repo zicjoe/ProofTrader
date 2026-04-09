@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "npm run db:generate && tsx watch src/index.ts",
     "build": "npm run db:generate && tsc -p tsconfig.json",
-    "start:railway": "tsx src/index.ts",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:push": "prisma db push --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate dev --config ../../prisma.config.ts --name init",
@@ -20,12 +19,12 @@
     "dotenv": "^16.6.1",
     "fastify": "^5.6.1",
     "pg": "^8.16.3",
-    "tsx": "^4.20.6",
     "viem": "^2.38.2"
   },
   "devDependencies": {
     "@types/pg": "^8.15.5",
     "prisma": "^7.0.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.9.2"
   }
 }

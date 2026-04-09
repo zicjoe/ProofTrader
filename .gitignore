@@ -6,6 +6,5 @@ coverage
 *.log
 apps/web/dist
 apps/api/dist
-apps/.env
-.env.example
+
 apps/api/generated

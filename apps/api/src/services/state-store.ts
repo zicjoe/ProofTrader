@@ -2332,10 +2332,49 @@ class StateStore {
     };
   }
 
+  private isRunnerPaperWorkspaceMissing(message: string) {
+    const text = message.toLowerCase();
+    return (
+      text.includes("not initialized") ||
+      text.includes("paper trading is not initialized") ||
+      text.includes("paper account is not initialized") ||
+      text.includes("run paper init") ||
+      text.includes("initialize paper")
+    );
+  }
+
+  private async tryRecoverMissingRunnerPaperState(workspaceId: string, snapshot: ProofTraderSnapshot) {
+    const mode = snapshot.settings.exchange.accountMode ?? "spot";
+    const positions = await prisma.position.findMany({
+      where: { workspaceId },
+      orderBy: { openedAt: "desc" }
+    });
+
+    if (positions.length > 0) {
+      return {
+        recovered: false,
+        message:
+          "Runner paper state is missing after deploy while tracked positions still exist. Attach a persistent volume to kraken-runner, redeploy, then sync again. If the runner state is already gone, reset the paper workspace before trading again."
+      };
+    }
+
+    const recoveryBalance = snapshot.paper.balance > 0 ? snapshot.paper.balance : 10_000;
+
+    await krakenCliService.initPaper(recoveryBalance, "USD", mode);
+
+    snapshot.paper.initialized = true;
+    snapshot.paper.lastError = null;
+
+    return {
+      recovered: true,
+      message: null as string | null
+    };
+  }
+
   private async reconcilePaperState(
     workspaceId: string,
     snapshot: ProofTraderSnapshot,
-    options: { persist?: boolean; logErrors?: boolean } = {}
+    options: { persist?: boolean; logErrors?: boolean; allowAutoRecover?: boolean } = {}
   ) {
     const mode = snapshot.settings.exchange.accountMode ?? "spot";
     const leverage = accountLeverage(mode, Math.min(snapshot.settings.exchange.futuresLeverage, snapshot.risk.policy.futuresMaxLeverage));
@@ -2360,6 +2399,8 @@ class StateStore {
       ]);
 
       let openUnrealized = 0;
+      const refreshedPositions = [];
+
       for (const position of positions) {
         const positionMode = inferPositionAccountMode(position);
         const ticker = await krakenCliService.ticker(position.symbol);
@@ -2369,7 +2410,7 @@ class StateStore {
         const liquidationPrice = calculateLiquidationPrice(position.entryPrice, position.side, Math.max(position.leverage, 1), positionMode);
         openUnrealized += unrealizedPnL;
 
-        await prisma.position.update({
+        const updatedPosition = await prisma.position.update({
           where: { id: position.id },
           data: {
             currentPrice,
@@ -2378,19 +2419,22 @@ class StateStore {
             liquidationPrice
           }
         });
+
+        refreshedPositions.push(updatedPosition);
       }
 
       const normalizedStatus = krakenCliService.normalizePaperStatus(statusPayload);
       const normalizedBalance = krakenCliService.normalizePaperStatus(balancePayload);
       const recentOrders = krakenCliService.normalizePaperHistory(historyPayload).slice(0, 8);
       const syncedAt = new Date().toISOString();
-      const spotMarketValue = positions
+      const positionsForMath = refreshedPositions.length > 0 ? refreshedPositions : positions;
+      const spotMarketValue = positionsForMath
         .filter((position) => inferPositionAccountMode(position) === "spot")
         .reduce((sum, position) => sum + (position.currentPrice * position.size), 0);
-      const futuresLockedCollateral = positions
+      const futuresLockedCollateral = positionsForMath
         .filter((position) => inferPositionAccountMode(position) === "futures")
         .reduce((sum, position) => sum + position.collateral, 0);
-      const futuresUnrealized = positions
+      const futuresUnrealized = positionsForMath
         .filter((position) => inferPositionAccountMode(position) === "futures")
         .reduce((sum, position) => sum + position.unrealizedPnL, 0);
       const normalizedFreeBalance = normalizedBalance.balance > 0
@@ -2398,10 +2442,11 @@ class StateStore {
         : normalizedStatus.balance > 0
           ? round(normalizedStatus.balance, 2)
           : snapshot.paper.balance;
-      const balance = mode === "futures" && positions.length > 0
+      const hasOpenFuturesPositions = positionsForMath.some((position) => inferPositionAccountMode(position) === "futures");
+      const balance = mode === "futures" && hasOpenFuturesPositions
         ? round(snapshot.paper.balance, 2)
         : normalizedFreeBalance;
-      const equity = positions.length === 0
+      const equity = positionsForMath.length === 0
         ? round(balance, 2)
         : round(balance + spotMarketValue + futuresLockedCollateral + futuresUnrealized, 2);
 
@@ -2418,7 +2463,7 @@ class StateStore {
         unrealizedPnL: round(openUnrealized, 2),
         realizedPnL: round(normalizedStatus.realizedPnl, 2),
         tradeCount: Math.max(normalizedStatus.tradeCount, recentOrders.length, snapshot.trades.length),
-        openPositionCount: positions.length,
+        openPositionCount: positionsForMath.length,
         lastError: null,
         recentOrders
       };
@@ -2434,6 +2479,74 @@ class StateStore {
       return { snapshot, error: null as string | null };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown paper sync failure.";
+
+      if (options.allowAutoRecover !== false && this.isRunnerPaperWorkspaceMissing(message)) {
+        try {
+          const recovery = await this.tryRecoverMissingRunnerPaperState(workspaceId, snapshot);
+
+          if (recovery.recovered) {
+            await this.appendLog(
+              workspaceId,
+              "execution",
+              "warning",
+              "Runner paper state was missing after deploy. Auto-reinitialized paper workspace on the runner.",
+              { mode, balance: snapshot.paper.balance }
+            );
+
+            return this.reconcilePaperState(workspaceId, snapshot, {
+              ...options,
+              allowAutoRecover: false
+            });
+          }
+
+          snapshot.paper = {
+            ...snapshot.paper,
+            status: "error",
+            initialized: false,
+            lastError: recovery.message
+          };
+
+          snapshot.system.connections.lastSyncLabel = formatSyncLabel(snapshot.paper.syncedAt ? new Date(snapshot.paper.syncedAt) : null);
+
+          if (options.logErrors) {
+            await this.appendLog(workspaceId, "error", "error", "Paper account sync failed.", {
+              error: recovery.message
+            });
+          }
+
+          if (options.persist) {
+            await this.persistSnapshot(workspaceId, snapshot);
+          }
+
+          return { snapshot, error: recovery.message };
+        } catch (recoveryError) {
+          const recoveryMessage = recoveryError instanceof Error ? recoveryError.message : "Auto recovery failed.";
+
+          const finalMessage = `Runner paper state was missing after deploy and auto recovery failed: ${recoveryMessage}`;
+
+          snapshot.paper = {
+            ...snapshot.paper,
+            status: "error",
+            initialized: false,
+            lastError: finalMessage
+          };
+
+          snapshot.system.connections.lastSyncLabel = formatSyncLabel(snapshot.paper.syncedAt ? new Date(snapshot.paper.syncedAt) : null);
+
+          if (options.logErrors) {
+            await this.appendLog(workspaceId, "error", "error", "Paper account sync failed.", {
+              error: finalMessage
+            });
+          }
+
+          if (options.persist) {
+            await this.persistSnapshot(workspaceId, snapshot);
+          }
+
+          return { snapshot, error: finalMessage };
+        }
+      }
+
       snapshot.paper = {
         ...snapshot.paper,
         status: "error",
