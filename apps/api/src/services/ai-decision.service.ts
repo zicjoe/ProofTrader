@@ -230,7 +230,7 @@ class AiDecisionService {
             {
               role: "system",
               content:
-                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. You are allowed to select regime, module, confidence, and bounded execution tuning, but you may not invent symbols, directions, or unsafe sizing. Maximize professional risk-adjusted expectancy, not raw activity. Prefer candidates with aligned 1h and 15m trends, healthy ATR structure, narrow spreads, deep books, good execution quality, and cleaner portfolio fit. Respect portfolio concentration, bucket crowding, same-side exposure, and any futures throttle posture when accountMode is futures. Return strict JSON only."
+                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. You are allowed to select regime, module, confidence, and bounded execution tuning, but you may not invent symbols, directions, or unsafe sizing. Maximize professional risk-adjusted expectancy, not raw activity. The strategy is trend-following, not mean reversion. In spot mode, treat the system as long only and prefer only clean trend pullback or aligned breakout longs. In futures mode, you may consider long or short candidates, but only when higher-timeframe direction, execution quality, and risk posture are aligned. Prefer candidates with aligned 1h and 15m trends, healthy ATR structure, narrow spreads, deep books, good execution quality, and cleaner portfolio fit. Respect portfolio concentration, bucket crowding, same-side exposure, and any futures throttle posture when accountMode is futures. Return strict JSON only."
             },
             {
               role: "user",
@@ -244,6 +244,11 @@ class AiDecisionService {
                   neverBypassRiskControls: true,
                   confidenceThresholdIsHardGate: true,
                   futuresThrottleIsAuthoritative: true,
+                  strategyDiscipline: {
+                    meanReversionDisabled: true,
+                    spotMode: "long only; choose only clean trend pullback or aligned breakout longs",
+                    futuresMode: "directional; choose long or short only when higher-timeframe alignment and futures throttle permit"
+                  },
                   boundedTuning: {
                     sizeMultiplier: "number between 0.6 and 1.25",
                     stopLossPercent: "number between 0.6 and 2.0",
@@ -294,10 +299,20 @@ class AiDecisionService {
       const thresholdGatePassed = confidence == null ? false : confidence >= input.effectiveConfidenceThreshold;
       const selectedMatchesSymbol = !selectedCandidate || !recommendedSymbol || selectedCandidate.symbol.toUpperCase() === recommendedSymbol;
       const selectedMatchesAction = !selectedCandidate || recommendedAction === selectedCandidate.action;
+      const selectedRespectsMode = !(input.accountMode === "spot" && recommendedAction === "SHORT");
       const throttleAllowsTrade = !(input.accountMode === "futures" && input.futuresThrottle?.blockNewEntries);
-      const shouldTrade = Boolean(parsed.shouldTrade) && Boolean(selectedCandidate) && recommendedAction !== "HOLD" && thresholdGatePassed && throttleAllowsTrade;
+      const shouldTrade = Boolean(parsed.shouldTrade) && Boolean(selectedCandidate) && recommendedAction !== "HOLD" && thresholdGatePassed && throttleAllowsTrade && selectedRespectsMode;
 
-      if (shouldTrade && (!selectedCandidate || !selectedMatchesSymbol || !selectedMatchesAction)) {
+      if (Boolean(parsed.shouldTrade) && input.accountMode === "spot" && recommendedAction === "SHORT") {
+        return this.buildFallback(
+          input,
+          lastDecisionAt,
+          null,
+          "AI attempted a short in spot mode. Spot mode is long only, so the system fell back to the deterministic strategy engine."
+        );
+      }
+
+      if (shouldTrade && (!selectedCandidate || !selectedMatchesSymbol || !selectedMatchesAction || !selectedRespectsMode)) {
         return this.buildFallback(
           input,
           lastDecisionAt,
