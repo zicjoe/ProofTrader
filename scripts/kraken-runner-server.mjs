@@ -1,7 +1,5 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -9,30 +7,6 @@ const PORT = Number(process.env.PORT || 4011);
 let paperQueue = Promise.resolve();
 const BINARY = process.env.KRAKEN_CLI_PATH || "kraken";
 const enabled = String(process.env.KRAKEN_CLI_ENABLED).toLowerCase() === "true";
-
-const STATE_DIR = (
-  process.env.KRAKEN_RUNNER_STATE_DIR ||
-  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
-  "/data/kraken-runner"
-).trim();
-
-const HOME_DIR = join(STATE_DIR, "home");
-const CONFIG_DIR = join(STATE_DIR, ".config");
-const DATA_DIR = join(STATE_DIR, ".local", "share");
-const CACHE_DIR = join(STATE_DIR, ".cache");
-
-for (const dir of [STATE_DIR, HOME_DIR, CONFIG_DIR, DATA_DIR, CACHE_DIR]) {
-  mkdirSync(dir, { recursive: true });
-}
-
-const runnerEnv = {
-  ...process.env,
-  HOME: HOME_DIR,
-  XDG_CONFIG_HOME: CONFIG_DIR,
-  XDG_DATA_HOME: DATA_DIR,
-  XDG_CACHE_HOME: CACHE_DIR,
-  KRAKEN_RUNNER_STATE_DIR: STATE_DIR
-};
 
 function sendJson(res, status, payload) {
   res.writeHead(status, { "content-type": "application/json" });
@@ -43,16 +17,13 @@ async function runCli(args) {
   if (!enabled) {
     throw new Error("Kraken CLI is disabled on the runner.");
   }
-
   try {
     const { stdout, stderr } = await execFileAsync(BINARY, args, {
-      env: runnerEnv,
+      env: process.env,
       timeout: 30000,
       maxBuffer: 4 * 1024 * 1024
     });
-
     const output = (stdout || stderr || "").trim();
-
     try {
       return JSON.parse(output);
     } catch {
@@ -63,7 +34,6 @@ async function runCli(args) {
     const output = `${processError.stdout ?? ""}
 ${processError.stderr ?? ""}
 ${processError.message ?? ""}`.trim();
-
     throw new Error(output || "Kraken CLI command failed.");
   }
 }
@@ -85,9 +55,7 @@ async function readBody(req) {
 }
 
 function modeArgs(mode, command) {
-  return mode === "futures"
-    ? ["futures", "paper", command, "-o", "json"]
-    : ["paper", command, "-o", "json"];
+  return mode === "futures" ? ["futures", "paper", command, "-o", "json"] : ["paper", command, "-o", "json"];
 }
 
 const server = createServer(async (req, res) => {
@@ -96,38 +64,25 @@ const server = createServer(async (req, res) => {
     console.log(`[runner] ${req.method} ${url.pathname}${url.search}`);
 
     if (req.method === "GET" && url.pathname === "/health") {
-      return sendJson(res, 200, {
-        ok: true,
-        service: "kraken-runner",
-        cliEnabled: enabled,
-        binary: BINARY,
-        stateDir: STATE_DIR
-      });
+      return sendJson(res, 200, { ok: true, service: "kraken-runner", cliEnabled: enabled, binary: BINARY });
     }
 
     if (req.method === "GET" && url.pathname === "/v1/market/ticker") {
-      const symbol = String(url.searchParams.get("symbol") || "BTCUSD")
-        .replace(/[^A-Za-z0-9]/g, "")
-        .toUpperCase();
-
+      const symbol = String(url.searchParams.get("symbol") || "BTCUSD").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
       return sendJson(res, 200, await runCli(["ticker", symbol, "-o", "json"]));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/market/ohlc") {
       const symbol = String(url.searchParams.get("symbol") || "XBTUSD");
       const interval = String(url.searchParams.get("interval") || "5");
-      const response = await fetch(
-        `https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`
-      );
+      const response = await fetch(`https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`);
       return sendJson(res, response.status, await response.json());
     }
 
     if (req.method === "GET" && url.pathname === "/v1/market/depth") {
       const symbol = String(url.searchParams.get("symbol") || "XBTUSD");
       const count = String(url.searchParams.get("count") || "10");
-      const response = await fetch(
-        `https://api.kraken.com/0/public/Depth?pair=${encodeURIComponent(symbol)}&count=${encodeURIComponent(count)}`
-      );
+      const response = await fetch(`https://api.kraken.com/0/public/Depth?pair=${encodeURIComponent(symbol)}&count=${encodeURIComponent(count)}`);
       return sendJson(res, response.status, await response.json());
     }
 
@@ -135,24 +90,8 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const balance = Number(body.balance ?? 10000);
       const mode = body.mode === "futures" ? "futures" : "spot";
-
-      const args =
-        mode === "futures"
-          ? ["futures", "paper", "init", "--balance", String(balance), "-o", "json"]
-          : ["paper", "init", "--balance", String(balance), "-o", "json"];
-
-      try {
-        return sendJson(res, 200, await runPaperCli(args));
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message.toLowerCase() : "unknown runner init error";
-
-        if (message.includes("already initialized")) {
-          return sendJson(res, 200, await runPaperCli(modeArgs(mode, "status")));
-        }
-
-        throw error;
-      }
+      const args = mode === "futures" ? ["futures", "paper", "init", "--balance", String(balance), "-o", "json"] : ["paper", "init", "--balance", String(balance), "-o", "json"];
+      return sendJson(res, 200, await runPaperCli(args));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/paper/status") {
@@ -162,11 +101,9 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/v1/paper/history") {
       const mode = url.searchParams.get("mode") === "futures" ? "futures" : "spot";
-
       if (mode === "futures") {
         return sendJson(res, 200, { history: [] });
       }
-
       return sendJson(res, 200, await runPaperCli(["paper", "history", "-o", "json"]));
     }
 
@@ -187,28 +124,22 @@ const server = createServer(async (req, res) => {
       const size = Number(body.size ?? 0);
       const leverage = Math.max(Number(body.leverage ?? 2), 1);
       const symbol = String(body.symbol || "BTC/USD");
-
       const normalizeSpot = symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      const normalized =
-        mode === "futures"
-          ? (() => {
-              const base = normalizeSpot.replace(/^PF_/, "");
-              if (base === "BTCUSD" || base === "XBTUSD") return "PF_XBTUSD";
-              if (base === "ETHUSD") return "PF_ETHUSD";
-              if (base === "SOLUSD") return "PF_SOLUSD";
-              return base.startsWith("PF_") ? base : `PF_${base}`;
-            })()
-          : normalizeSpot;
-
-      const args =
-        mode === "futures"
-          ? ["futures", "paper", side, normalized, String(size), "--leverage", String(leverage), "--type", orderType]
-          : ["paper", side, normalized, String(size), "--type", orderType];
-
+      const normalized = mode === "futures"
+        ? (() => {
+            const base = normalizeSpot.replace(/^PF_/, "");
+            if (base === "BTCUSD" || base === "XBTUSD") return "PF_XBTUSD";
+            if (base === "ETHUSD") return "PF_ETHUSD";
+            if (base === "SOLUSD") return "PF_SOLUSD";
+            return base.startsWith("PF_") ? base : `PF_${base}`;
+          })()
+        : normalizeSpot;
+      const args = mode === "futures"
+        ? ["futures", "paper", side, normalized, String(size), "--leverage", String(leverage), "--type", orderType]
+        : ["paper", side, normalized, String(size), "--type", orderType];
       if (orderType === "limit" && typeof body.limitPrice === "number") {
         args.push("--price", String(body.limitPrice));
       }
-
       args.push("-o", "json");
       return sendJson(res, 200, await runPaperCli(args));
     }
@@ -223,5 +154,4 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[runner] listening on ${PORT}`);
-  console.log(`[runner] state dir: ${STATE_DIR}`);
 });
