@@ -108,6 +108,8 @@ export function StrategyPage() {
   const futuresDefense = strategy.ai.futuresDefense;
   const positionExitEngine = strategy.ai.positionExitEngine;
   const portfolioAllocation = strategy.ai.portfolioAllocation;
+  const isFuturesMode = accountMode === "futures";
+  const modeLabel = isFuturesMode ? "Futures" : "Spot";
 
   const handleToggle = async () => {
     try {
@@ -240,26 +242,26 @@ export function StrategyPage() {
               </div>
             </Surface>
             <Surface label="Cadence">
-              <p className="mt-2 text-sm text-zinc-300">{runner.cadenceSeconds}s scan interval</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{runner.cadenceSeconds}s scan interval</p>
             </Surface>
             <Surface label="Watched symbols">
-              <p className="mt-2 text-sm text-zinc-300">{runner.watchedSymbols.join(", ")}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{runner.watchedSymbols.join(", ")}</p>
             </Surface>
             <Surface label="Latest summary">
-              <p className="mt-2 text-sm text-zinc-300">{runner.latestSummary}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{runner.latestSummary}</p>
             </Surface>
             <div className="grid gap-3 md:grid-cols-2">
               <Surface label="Confidence threshold">
-                <p className="mt-2 text-sm text-zinc-300">{Math.round(runner.confidenceThreshold * 100)}%</p>
+                <p className="mt-2 break-words text-sm text-zinc-300">{Math.round(runner.confidenceThreshold * 100)}%</p>
               </Surface>
               <Surface label="Trade size per signal">
-                <p className="mt-2 text-sm text-zinc-300">${runner.tradeSizeUsd.toFixed(2)}</p>
+                <p className="mt-2 break-words text-sm text-zinc-300">${runner.tradeSizeUsd.toFixed(2)}</p>
               </Surface>
               <Surface label="Max auto trades / day">
-                <p className="mt-2 text-sm text-zinc-300">{runner.maxTradesPerDay}</p>
+                <p className="mt-2 break-words text-sm text-zinc-300">{runner.maxTradesPerDay}</p>
               </Surface>
               <Surface label="Cooldown after losses">
-                <p className="mt-2 text-sm text-zinc-300">{runner.cooldownAfterLosses}</p>
+                <p className="mt-2 break-words text-sm text-zinc-300">{runner.cooldownAfterLosses}</p>
               </Surface>
             </div>
           </CardContent>
@@ -344,7 +346,7 @@ export function StrategyPage() {
       <Card className="border-zinc-800 bg-zinc-900">
         <CardHeader><CardTitle>AI Decision Engine</CardTitle></CardHeader>
         <CardContent className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
             <Surface label="AI status">
               <div className="mt-2 flex items-center justify-between gap-3">
                 <span className="font-medium text-white">{strategy.ai.status}</span>
@@ -354,76 +356,80 @@ export function StrategyPage() {
               </div>
             </Surface>
             <Surface label="Model">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.model}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.model}</p>
             </Surface>
             <Surface label="Recommendation">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.recommendedSymbol ? `${strategy.ai.recommendedSymbol} ${strategy.ai.recommendedAction}` : "HOLD"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.recommendedSymbol ? `${strategy.ai.recommendedSymbol} ${strategy.ai.recommendedAction}` : "HOLD"}</p>
             </Surface>
             <Surface label="Strategy module">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.strategyModule ?? "Observation"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.strategyModule ?? "Observation"}</p>
             </Surface>
             <Surface label="Execution bias">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.executionBias ?? "Balanced"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.executionBias ?? "Balanced"}</p>
             </Surface>
             <Surface label="AI confidence">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.confidence != null ? `${Math.round(strategy.ai.confidence * 100)}%` : "No score"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.confidence != null ? `${Math.round(strategy.ai.confidence * 100)}%` : "No score"}</p>
             </Surface>
             <Surface label="Size multiplier">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.sizeMultiplier != null ? `${strategy.ai.sizeMultiplier.toFixed(2)}x` : "—"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.sizeMultiplier != null ? `${strategy.ai.sizeMultiplier.toFixed(2)}x` : "—"}</p>
             </Surface>
             <Surface label="Stop loss envelope">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.stopLossPercent != null ? `${strategy.ai.stopLossPercent.toFixed(2)}%` : "—"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.stopLossPercent != null ? `${strategy.ai.stopLossPercent.toFixed(2)}%` : "—"}</p>
             </Surface>
             <Surface label="Take profit envelope">
-              <p className="mt-2 text-sm text-zinc-300">{strategy.ai.takeProfitPercent != null ? `${strategy.ai.takeProfitPercent.toFixed(2)}%` : "—"}</p>
+              <p className="mt-2 break-words text-sm text-zinc-300">{strategy.ai.takeProfitPercent != null ? `${strategy.ai.takeProfitPercent.toFixed(2)}%` : "—"}</p>
             </Surface>
-            <Surface label="Futures throttle posture">
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="font-medium text-white">{futuresThrottle?.posture ?? "Normal"}</span>
-                <Badge className={
-                  !futuresThrottle || futuresThrottle.posture === "Normal"
-                    ? "border-zinc-700 bg-zinc-800 text-zinc-300"
-                    : futuresThrottle.posture === "Guarded"
-                      ? "border-emerald-800 bg-emerald-950 text-emerald-300"
-                      : futuresThrottle.posture === "Tight"
-                        ? "border-amber-800 bg-amber-950 text-amber-300"
-                        : "border-red-800 bg-red-950 text-red-300"
-                }>
-                  {futuresThrottle?.blockNewEntries ? "Blocking new futures entries" : futuresThrottle && futuresThrottle.posture !== "Normal" ? "AI throttle active" : "Normal envelope"}
-                </Badge>
-              </div>
-            </Surface>
-            <Surface label="Futures effective gate">
-              <p className="mt-2 text-sm text-zinc-300">
-                {futuresThrottle ? `${Math.round(futuresThrottle.adjustedConfidenceThreshold * 100)}% confidence · ${futuresThrottle.adjustedMaxTradesPerDay} trades/day` : `${Math.round(runner.confidenceThreshold * 100)}% confidence · ${runner.maxTradesPerDay} trades/day`}
-              </p>
-            </Surface>
-            <Surface label="Futures size and leverage">
-              <p className="mt-2 text-sm text-zinc-300">
-                {futuresThrottle ? `$${futuresThrottle.adjustedTradeSizeUsd.toFixed(2)} target size · ${Math.round(futuresThrottle.sizeFactor * 100)}% factor · ${futuresThrottle.leverageCap}x cap` : "Normal futures envelope"}
-              </p>
-            </Surface>
-            <Surface label="Futures defense status">
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="font-medium text-white">{futuresDefense?.status ?? "Idle"}</span>
-                <Badge className={
-                  !futuresDefense || futuresDefense.action === "HOLD"
-                    ? "border-zinc-700 bg-zinc-800 text-zinc-300"
-                    : futuresDefense.action === "CLOSE"
-                      ? "border-red-800 bg-red-950 text-red-300"
-                      : "border-amber-800 bg-amber-950 text-amber-300"
-                }>
-                  {futuresDefense?.action === "CLOSE"
-                    ? "Forced close ready"
-                    : futuresDefense && futuresDefense.action !== "HOLD"
-                      ? "Protective reduce ready"
-                      : "Monitoring only"}
-                </Badge>
-              </div>
-            </Surface>
-            <Surface label="Portfolio allocation">
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="font-medium text-white">{portfolioAllocation?.status ?? "Idle"}</span>
+            {isFuturesMode && (
+              <>
+                <Surface label="Futures throttle posture">
+                  <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                    <span className="min-w-0 break-words font-medium text-white">{futuresThrottle?.posture ?? "Normal"}</span>
+                    <Badge className={
+                      !futuresThrottle || futuresThrottle.posture === "Normal"
+                        ? "border-zinc-700 bg-zinc-800 text-zinc-300"
+                        : futuresThrottle.posture === "Guarded"
+                          ? "border-emerald-800 bg-emerald-950 text-emerald-300"
+                          : futuresThrottle.posture === "Tight"
+                            ? "border-amber-800 bg-amber-950 text-amber-300"
+                            : "border-red-800 bg-red-950 text-red-300"
+                    }>
+                      {futuresThrottle?.blockNewEntries ? "Blocking new entries" : futuresThrottle && futuresThrottle.posture !== "Normal" ? "Throttle active" : "Normal envelope"}
+                    </Badge>
+                  </div>
+                </Surface>
+                <Surface label="Futures effective gate">
+                  <p className="mt-2 break-words text-sm text-zinc-300">
+                    {futuresThrottle ? `${Math.round(futuresThrottle.adjustedConfidenceThreshold * 100)}% confidence · ${futuresThrottle.adjustedMaxTradesPerDay} trades/day` : `${Math.round(runner.confidenceThreshold * 100)}% confidence · ${runner.maxTradesPerDay} trades/day`}
+                  </p>
+                </Surface>
+                <Surface label="Futures size and leverage">
+                  <p className="mt-2 break-words text-sm text-zinc-300">
+                    {futuresThrottle ? `$${futuresThrottle.adjustedTradeSizeUsd.toFixed(2)} target size · ${Math.round(futuresThrottle.sizeFactor * 100)}% factor · ${futuresThrottle.leverageCap}x cap` : "Normal futures envelope"}
+                  </p>
+                </Surface>
+                <Surface label="Futures defense status">
+                  <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                    <span className="min-w-0 break-words font-medium text-white">{futuresDefense?.status ?? "Idle"}</span>
+                    <Badge className={
+                      !futuresDefense || futuresDefense.action === "HOLD"
+                        ? "border-zinc-700 bg-zinc-800 text-zinc-300"
+                        : futuresDefense.action === "CLOSE"
+                          ? "border-red-800 bg-red-950 text-red-300"
+                          : "border-amber-800 bg-amber-950 text-amber-300"
+                    }>
+                      {futuresDefense?.action === "CLOSE"
+                        ? "Forced close ready"
+                        : futuresDefense && futuresDefense.action !== "HOLD"
+                          ? "Protective reduce ready"
+                          : "Monitoring only"}
+                    </Badge>
+                  </div>
+                </Surface>
+              </>
+            )}
+            <Surface label={`${modeLabel} portfolio allocation`}>
+              <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                <span className="min-w-0 break-words font-medium text-white">{portfolioAllocation?.status ?? "Idle"}</span>
                 <Badge className={
                   !portfolioAllocation || portfolioAllocation.status === "Idle"
                     ? "border-zinc-700 bg-zinc-800 text-zinc-300"
@@ -444,8 +450,8 @@ export function StrategyPage() {
               </div>
             </Surface>
             <Surface label="Auto exit engine">
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="font-medium text-white">{positionExitEngine?.status ?? "Idle"}</span>
+              <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                <span className="min-w-0 break-words font-medium text-white">{positionExitEngine?.status ?? "Idle"}</span>
                 <Badge className={
                   !positionExitEngine || positionExitEngine.action === "HOLD"
                     ? "border-zinc-700 bg-zinc-800 text-zinc-300"
@@ -466,30 +472,30 @@ export function StrategyPage() {
           </div>
           <div className="space-y-3">
             <Surface label="Rationale">
-              <p className="mt-2 text-sm leading-6 text-zinc-300">{strategy.ai.rationale}</p>
+              <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{strategy.ai.rationale}</p>
             </Surface>
             <Surface label="Risk note">
-              <p className="mt-2 text-sm leading-6 text-zinc-300">{strategy.ai.riskNote}</p>
+              <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{strategy.ai.riskNote}</p>
             </Surface>
-            {futuresThrottle && (
+            {isFuturesMode && futuresThrottle && (
               <Surface label="Futures throttle summary">
-                <p className="mt-2 text-sm leading-6 text-zinc-300">{futuresThrottle.summary}</p>
+                <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{futuresThrottle.summary}</p>
                 {futuresThrottle.reasons.length > 0 && (
-                  <p className="mt-2 text-xs leading-5 text-zinc-400">{futuresThrottle.reasons.join(" ")}</p>
+                  <p className="mt-2 break-words text-xs leading-5 text-zinc-400">{futuresThrottle.reasons.join(" ")}</p>
                 )}
-                <p className="mt-2 text-xs text-zinc-500">
+                <p className="mt-2 break-words text-xs text-zinc-500">
                   Score {futuresThrottle.score} · Daily loss {Math.round(futuresThrottle.dailyLossUtilization * 100)}% · Drawdown {Math.round(futuresThrottle.drawdownUtilization * 100)}% · Exposure {Math.round(futuresThrottle.exposureUtilization * 100)}%
                   {futuresThrottle.minLiquidationBufferPercent != null ? ` · Min liquidation buffer ${futuresThrottle.minLiquidationBufferPercent.toFixed(2)}%` : ""}
                 </p>
               </Surface>
             )}
-            {futuresDefense && (
+            {isFuturesMode && futuresDefense && (
               <Surface label="Futures defense summary">
-                <p className="mt-2 text-sm leading-6 text-zinc-300">{futuresDefense.summary}</p>
+                <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{futuresDefense.summary}</p>
                 {futuresDefense.reasons.length > 0 && (
-                  <p className="mt-2 text-xs leading-5 text-zinc-400">{futuresDefense.reasons.join(" ")}</p>
+                  <p className="mt-2 break-words text-xs leading-5 text-zinc-400">{futuresDefense.reasons.join(" ")}</p>
                 )}
-                <p className="mt-2 text-xs text-zinc-500">
+                <p className="mt-2 break-words text-xs text-zinc-500">
                   {futuresDefense.targetSymbol ?? "No target"}
                   {futuresDefense.liveLiquidationBufferPercent != null ? ` · Live buffer ${futuresDefense.liveLiquidationBufferPercent.toFixed(2)}%` : ""}
                   {futuresDefense.lossOnCollateralPercent != null ? ` · Loss on collateral ${futuresDefense.lossOnCollateralPercent.toFixed(2)}%` : ""}
@@ -499,12 +505,12 @@ export function StrategyPage() {
               </Surface>
             )}
             {portfolioAllocation && (
-              <Surface label="Portfolio allocation summary">
-                <p className="mt-2 text-sm leading-6 text-zinc-300">{portfolioAllocation.summary}</p>
+              <Surface label={`${modeLabel} portfolio allocation summary`}>
+                <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{portfolioAllocation.summary}</p>
                 {portfolioAllocation.reasons.length > 0 && (
-                  <p className="mt-2 text-xs leading-5 text-zinc-400">{portfolioAllocation.reasons.join(" ")}</p>
+                  <p className="mt-2 break-words text-xs leading-5 text-zinc-400">{portfolioAllocation.reasons.join(" ")}</p>
                 )}
-                <p className="mt-2 text-xs text-zinc-500">
+                <p className="mt-2 break-words text-xs text-zinc-500">
                   {portfolioAllocation.targetSymbol ?? "No target"}
                   {portfolioAllocation.targetBucket ? ` · ${portfolioAllocation.targetBucket}` : ""}
                   {portfolioAllocation.targetSide ? ` · ${portfolioAllocation.targetSide.toLowerCase()}` : ""}
@@ -520,11 +526,11 @@ export function StrategyPage() {
             )}
             {positionExitEngine && (
               <Surface label="Auto exit summary">
-                <p className="mt-2 text-sm leading-6 text-zinc-300">{positionExitEngine.summary}</p>
+                <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{positionExitEngine.summary}</p>
                 {positionExitEngine.reasons.length > 0 && (
-                  <p className="mt-2 text-xs leading-5 text-zinc-400">{positionExitEngine.reasons.join(" ")}</p>
+                  <p className="mt-2 break-words text-xs leading-5 text-zinc-400">{positionExitEngine.reasons.join(" ")}</p>
                 )}
-                <p className="mt-2 text-xs text-zinc-500">
+                <p className="mt-2 break-words text-xs text-zinc-500">
                   {positionExitEngine.targetSymbol ?? "No target"}
                   {positionExitEngine.targetAccountMode ? ` · ${positionExitEngine.targetAccountMode}` : ""}
                   {positionExitEngine.stopTriggeredCount > 0 ? ` · ${positionExitEngine.stopTriggeredCount} stop` : ""}
@@ -537,7 +543,7 @@ export function StrategyPage() {
             )}
             {strategy.ai.rankingSummary && (
               <Surface label="Ranking summary">
-                <p className="mt-2 text-sm leading-6 text-zinc-300">{strategy.ai.rankingSummary}</p>
+                <p className="mt-2 break-words text-sm leading-6 text-zinc-300">{strategy.ai.rankingSummary}</p>
               </Surface>
             )}
             {strategy.ai.error && (
@@ -566,13 +572,13 @@ export function StrategyPage() {
             </div>
           </Surface>
           <Surface label="Execution policy">
-            <p className="mt-2 text-sm text-zinc-300">{strategy.executionPolicy}</p>
+            <p className="mt-2 break-words text-sm text-zinc-300">{strategy.executionPolicy}</p>
           </Surface>
           <Surface label="Position sizing">
-            <p className="mt-2 text-sm text-zinc-300">{strategy.positionSizing}</p>
+            <p className="mt-2 break-words text-sm text-zinc-300">{strategy.positionSizing}</p>
           </Surface>
           <Surface label="Allowed symbols">
-            <p className="mt-2 text-sm text-zinc-300">{strategy.allowedSymbols.join(", ")}</p>
+            <p className="mt-2 break-words text-sm text-zinc-300">{strategy.allowedSymbols.join(", ")}</p>
           </Surface>
         </CardContent>
       </Card>
@@ -711,8 +717,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Surface({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-4">
-      <div className="text-sm text-zinc-500">{label}</div>
+    <div className="min-w-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+      <div className="break-words text-sm text-zinc-500">{label}</div>
       {children}
     </div>
   );
@@ -723,7 +729,7 @@ function StatCard({ label, value, compact = false }: { label: string; value: str
     <Card className="border-zinc-800 bg-zinc-900">
       <CardContent className="p-6">
         <div className="mb-2 text-sm text-zinc-400">{label}</div>
-        <div className={compact ? "text-base font-semibold text-white" : "text-2xl font-bold text-white"}>{value}</div>
+        <div className={compact ? "break-words text-base font-semibold text-white" : "break-words text-2xl font-bold text-white"}>{value}</div>
       </CardContent>
     </Card>
   );

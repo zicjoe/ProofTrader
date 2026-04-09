@@ -1076,6 +1076,19 @@ function setMetricValue(snapshot: ProofTraderSnapshot, label: string, value: num
   });
 }
 
+function computePaperEquity(availableBalance: number, positions: PositionRecord[]) {
+  const spotMarketValue = positions
+    .filter((position) => position.accountMode === "spot")
+    .reduce((sum, position) => sum + Math.abs(position.currentPrice * position.size), 0);
+  const futuresCollateral = positions
+    .filter((position) => position.accountMode === "futures")
+    .reduce((sum, position) => sum + position.collateral, 0);
+  const futuresUnrealized = positions
+    .filter((position) => position.accountMode === "futures")
+    .reduce((sum, position) => sum + position.unrealizedPnL, 0);
+
+  return round(availableBalance + spotMarketValue + futuresCollateral + futuresUnrealized, 2);
+}
 
 function mapLogLevel(level: string): LogRecord["level"] {
   if (level === "warning" || level === "error" || level === "success") return level;
@@ -3433,8 +3446,8 @@ class StateStore {
       riskCheckId: artifact.riskCheckId
     }));
 
-    if (mappedTrades.length === 0 && base.paper.recentOrders.length > 0) {
-      mappedTrades = base.paper.recentOrders.map((order) => ({
+    const fallbackHistoryTrades = mappedTrades.length === 0 && base.paper.recentOrders.length > 0
+      ? base.paper.recentOrders.map((order) => ({
         id: order.id,
         accountMode: order.accountMode,
         symbol: order.symbol,
@@ -3455,8 +3468,8 @@ class StateStore {
         signalSummary: "Imported from Kraken paper history.",
         riskSummary: "External paper order synced from Kraken CLI.",
         artifactId: null
-      }));
-    }
+      }))
+      : [];
 
     const closedTrades = mappedTrades.filter((trade) => trade.status === "Closed");
     const winningTrades = closedTrades.filter((trade) => trade.realizedPnL > 0);
@@ -3471,10 +3484,7 @@ class StateStore {
     const availableBalance = base.settings.exchange.paperTrading && base.paper.initialized
       ? round(base.paper.balance, 2)
       : round(storedAvailableBalance, 2);
-    const hasOpenExposure = mappedPositions.length > 0;
-    const totalEquity = base.settings.exchange.paperTrading && base.paper.initialized
-      ? round(hasOpenExposure ? (base.paper.equity > 0 ? base.paper.equity : availableBalance + openUnrealized) : availableBalance, 2)
-      : round(availableBalance + openUnrealized, 2);
+    const totalEquity = computePaperEquity(availableBalance, mappedPositions);
 
     const equityCurve = buildEquityCurve(mappedTrades, totalEquity, openUnrealized);
     const maxDrawdown = computeMaxDrawdown(equityCurve);
@@ -3612,10 +3622,10 @@ class StateStore {
     const leverageLabel = accountMode === "futures" ? `${base.settings.exchange.futuresLeverage}x` : "1x";
     base.dashboard.equityCurve = equityCurve;
     base.dashboard.openPositionsPreview = mappedPositions;
-    base.dashboard.recentTradesPreview = mappedTrades.slice(0, 3);
+    base.dashboard.recentTradesPreview = (mappedTrades.length > 0 ? mappedTrades : fallbackHistoryTrades).slice(0, 3);
     base.dashboard.recentArtifacts = mappedArtifacts.slice(0, 3);
     base.dashboard.recentSignals = recentSignals;
-    base.dashboard.totalTrades = Math.max(mappedTrades.length, base.paper.tradeCount);
+    base.dashboard.totalTrades = mappedTrades.length;
     base.dashboard.winRate = winRate;
     base.dashboard.maxDrawdown = maxDrawdown;
     base.dashboard.sharpeRatio = sharpeRatio;
@@ -4341,8 +4351,11 @@ class StateStore {
     const availableBalanceCard = snapshot.dashboard.metricCards.find((card) => card.label === "Available Balance");
     if (availableBalanceCard) {
       const balanceDebit = accountMode === "futures" ? collateral + fees : notional + fees;
-      setMetricValue(snapshot, "Available Balance", round(availableBalanceCard.value - balanceDebit, 2));
+      snapshot.paper.balance = round(Math.max(availableBalanceCard.value - balanceDebit, 0), 2);
+      setMetricValue(snapshot, "Available Balance", snapshot.paper.balance);
     }
+    snapshot.paper.tradeCount = Math.max(snapshot.paper.tradeCount + 1, snapshot.trades.length + 1);
+    snapshot.paper.openPositionCount = snapshot.positions.length + 1;
 
     await this.recordJob(workspaceId, `kraken.${accountMode}.paper.trade`, "Completed", 100, {
       tradeId,
