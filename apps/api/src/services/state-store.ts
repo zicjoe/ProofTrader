@@ -1076,19 +1076,6 @@ function setMetricValue(snapshot: ProofTraderSnapshot, label: string, value: num
   });
 }
 
-function computePaperEquity(availableBalance: number, positions: PositionRecord[]) {
-  const spotMarketValue = positions
-    .filter((position) => position.accountMode === "spot")
-    .reduce((sum, position) => sum + Math.abs(position.currentPrice * position.size), 0);
-  const futuresCollateral = positions
-    .filter((position) => position.accountMode === "futures")
-    .reduce((sum, position) => sum + position.collateral, 0);
-  const futuresUnrealized = positions
-    .filter((position) => position.accountMode === "futures")
-    .reduce((sum, position) => sum + position.unrealizedPnL, 0);
-
-  return round(availableBalance + spotMarketValue + futuresCollateral + futuresUnrealized, 2);
-}
 
 function mapLogLevel(level: string): LogRecord["level"] {
   if (level === "warning" || level === "error" || level === "success") return level;
@@ -1743,18 +1730,13 @@ class StateStore {
     return context;
   }
 
-  private buildExecutionAwareCandidates(symbol: string, context: MarketContext, accountMode: ExchangeAccountMode = "spot"): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
+  private buildExecutionAwareCandidates(symbol: string, context: MarketContext): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
     const candidates: StrategyCandidate[] = [];
     const atrPercent = Math.max(context.atr15mPercent || context.atr5mPercent, 0.45);
-    const spreadPenalty = Math.max(0, context.spreadBps - 4) * 0.008;
-    const liquidityBoost = clamp(context.liquidityUsd / 250000, 0, 1) * 0.08;
-    const isSpot = accountMode === "spot";
-    const isFutures = accountMode === "futures";
+    const spreadPenalty = Math.max(0, context.spreadBps - 5) * 0.006;
+    const liquidityBoost = clamp(context.liquidityUsd / 225000, 0, 1) * 0.08;
 
     const addCandidate = (candidate: Omit<StrategyCandidate, "id" | "symbol" | "price">) => {
-      if (isSpot && candidate.action === "SHORT") {
-        return;
-      }
       candidates.push({
         id: generateId("CAND"),
         symbol,
@@ -1766,9 +1748,9 @@ class StateStore {
         spreadPercent: round(candidate.spreadPercent, 4),
         volatilityPercent: round(candidate.volatilityPercent, 3),
         rangePosition: round(candidate.rangePosition, 3),
-        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, isFutures ? 1.9 : 1.8), 2),
-        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, isFutures ? 3.8 : 4.2), 2),
-        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.45, 1.1), 2),
+        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, 2.2), 2),
+        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, 4.5), 2),
+        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.55, 1.25), 2),
         atrPercent: round(candidate.atrPercent, 3),
         trend1hPercent: round(candidate.trend1hPercent, 3),
         trend15mPercent: round(candidate.trend15mPercent, 3),
@@ -1779,33 +1761,29 @@ class StateStore {
       });
     };
 
-    const bullishAlignment = context.trend1hPercent > 0.2 && context.trend15mPercent > 0.09;
-    const bearishAlignment = context.trend1hPercent < -0.2 && context.trend15mPercent < -0.09;
-    const strongExecution = context.executionQuality >= (isFutures ? 0.56 : 0.52);
-    const disciplinedSpread = context.spreadBps <= (isFutures ? 10 : 12);
-    const controlledVolatility = context.realizedVolatilityPercent <= (isFutures ? 2.3 : 2.6);
-    const pullbackLong = context.rangePosition5m >= 0.34 && context.rangePosition5m <= 0.72 && context.momentum5mPercent >= -0.28;
-    const pullbackShort = context.rangePosition5m <= 0.66 && context.rangePosition5m >= 0.28 && context.momentum5mPercent <= 0.28;
+    const bullishAlignment = context.trend1hPercent > 0.18 && context.trend15mPercent > 0.08;
+    const bearishAlignment = context.trend1hPercent < -0.18 && context.trend15mPercent < -0.08;
+    const rangeFriendly = context.regime === "Range" || (Math.abs(context.trend1hPercent) < 0.18 && Math.abs(context.trend15mPercent) < 0.14);
 
-    if (bullishAlignment && strongExecution && disciplinedSpread && controlledVolatility && pullbackLong && context.bookImbalance >= -0.08) {
-      const confidence = 0.61 + Math.abs(context.trend1hPercent) * 0.14 + Math.abs(context.trend15mPercent) * 0.22 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(atrPercent * (isFutures ? 1.0 : 1.08), 0.7), 0.7, isFutures ? 1.7 : 1.9);
+    if (bullishAlignment && context.momentum5mPercent > -0.18 && context.rangePosition5m >= 0.28 && context.executionQuality >= 0.48) {
+      const confidence = 0.58 + Math.abs(context.trend1hPercent) * 0.12 + Math.abs(context.trend15mPercent) * 0.25 + context.executionQuality * 0.16 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(atrPercent * 1.15, 0.72), 0.72, 2.1);
       addCandidate({
         action: "LONG",
         confidence,
-        type: "TREND_PULLBACK",
-        module: "Trend Pullback",
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
         regime: context.regime,
-        summary: `Trend pullback long. 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, 5m pullback inside trend, spread ${context.spreadBps.toFixed(1)} bps, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+        summary: `Trend continuation long. 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, spread ${context.spreadBps.toFixed(1)} bps, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
         momentumPercent: context.momentum5mPercent,
         mediumMomentumPercent: context.mediumMomentumPercent,
         spreadPercent: context.spreadPercent,
         volatilityPercent: context.realizedVolatilityPercent,
         rangePosition: context.rangePosition5m,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * (isFutures ? 2.0 : 2.3),
-        sizeMultiplier: isFutures ? 0.78 + context.executionQuality * 0.12 : 0.88 + context.executionQuality * 0.1,
-        expectedHoldMinutes: isFutures ? 180 : 240,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: 0.95 + context.executionQuality * 0.18,
+        expectedHoldMinutes: 240,
         atrPercent,
         trend1hPercent: context.trend1hPercent,
         trend15mPercent: context.trend15mPercent,
@@ -1816,25 +1794,25 @@ class StateStore {
       });
     }
 
-    if (isFutures && bearishAlignment && strongExecution && disciplinedSpread && controlledVolatility && pullbackShort && context.bookImbalance <= 0.08) {
-      const confidence = 0.61 + Math.abs(context.trend1hPercent) * 0.14 + Math.abs(context.trend15mPercent) * 0.22 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(atrPercent, 0.7), 0.7, 1.7);
+    if (bearishAlignment && context.momentum5mPercent < 0.18 && context.rangePosition5m <= 0.72 && context.executionQuality >= 0.48) {
+      const confidence = 0.58 + Math.abs(context.trend1hPercent) * 0.12 + Math.abs(context.trend15mPercent) * 0.25 + context.executionQuality * 0.16 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(atrPercent * 1.15, 0.72), 0.72, 2.1);
       addCandidate({
         action: "SHORT",
         confidence,
-        type: "TREND_PULLBACK",
-        module: "Trend Pullback",
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
         regime: context.regime,
-        summary: `Trend pullback short. 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, 5m bounce into downtrend, spread ${context.spreadBps.toFixed(1)} bps, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+        summary: `Trend continuation short. 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, spread ${context.spreadBps.toFixed(1)} bps, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
         momentumPercent: context.momentum5mPercent,
         mediumMomentumPercent: context.mediumMomentumPercent,
         spreadPercent: context.spreadPercent,
         volatilityPercent: context.realizedVolatilityPercent,
         rangePosition: context.rangePosition5m,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.0,
-        sizeMultiplier: 0.78 + context.executionQuality * 0.12,
-        expectedHoldMinutes: 180,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: 0.95 + context.executionQuality * 0.18,
+        expectedHoldMinutes: 240,
         atrPercent,
         trend1hPercent: context.trend1hPercent,
         trend15mPercent: context.trend15mPercent,
@@ -1845,28 +1823,55 @@ class StateStore {
       });
     }
 
-    const breakoutLong = bullishAlignment && context.breakoutPressure > 0.78 && context.rangePosition5m > 0.84 && context.bookImbalance > 0.02 && strongExecution && disciplinedSpread;
-    const breakoutShort = bearishAlignment && context.breakoutPressure > 0.78 && context.rangePosition5m < 0.16 && context.bookImbalance < -0.02 && strongExecution && disciplinedSpread;
-
+    const breakoutLong = context.breakoutPressure > 0.72 && context.rangePosition5m > 0.82 && context.bookImbalance > -0.12 && context.executionQuality >= 0.55;
+    const breakoutShort = context.breakoutPressure > 0.72 && context.rangePosition5m < 0.18 && context.bookImbalance < 0.12 && context.executionQuality >= 0.55;
     if (breakoutLong && context.regime !== "Risk Off") {
-      const confidence = 0.6 + context.breakoutPressure * 0.14 + Math.max(context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(context.atr5mPercent, 0.62), 0.62, isFutures ? 1.4 : 1.55);
+      const confidence = 0.57 + context.breakoutPressure * 0.16 + Math.max(context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(context.atr5mPercent * 1.05, 0.62), 0.62, 1.7);
       addCandidate({
         action: "LONG",
         confidence,
         type: "BREAKOUT_EXPANSION",
         module: "Breakout Expansion",
         regime: context.regime,
-        summary: `Breakout expansion long. Higher timeframes are aligned, 5m breakout pressure is ${(context.breakoutPressure * 100).toFixed(0)}%, book imbalance ${context.bookImbalance.toFixed(2)}, spread ${context.spreadBps.toFixed(1)} bps.`,
+        summary: `Breakout expansion long. 5m range position ${context.rangePosition5m.toFixed(2)}, breakout pressure ${(context.breakoutPressure * 100).toFixed(0)}%, book imbalance ${context.bookImbalance.toFixed(2)}.`,
         momentumPercent: context.momentum5mPercent,
         mediumMomentumPercent: context.mediumMomentumPercent,
         spreadPercent: context.spreadPercent,
         volatilityPercent: context.realizedVolatilityPercent,
         rangePosition: context.rangePosition5m,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * (isFutures ? 2.1 : 2.4),
-        sizeMultiplier: isFutures ? 0.74 + context.executionQuality * 0.1 : 0.86 + context.executionQuality * 0.08,
-        expectedHoldMinutes: isFutures ? 90 : 120,
+        takeProfitPercent: stopLossPercent * 2.4,
+        sizeMultiplier: 0.9 + context.executionQuality * 0.2,
+        expectedHoldMinutes: 120,
+        atrPercent: context.atr5mPercent,
+        trend1hPercent: context.trend1hPercent,
+        trend15mPercent: context.trend15mPercent,
+        spreadBps: context.spreadBps,
+        bookImbalance: context.bookImbalance,
+        liquidityUsd: context.liquidityUsd,
+        executionQuality: context.executionQuality
+      });
+    }
+    if (breakoutShort && context.regime !== "Risk Off") {
+      const confidence = 0.57 + context.breakoutPressure * 0.16 + Math.max(-context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(context.atr5mPercent * 1.05, 0.62), 0.62, 1.7);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "BREAKOUT_EXPANSION",
+        module: "Breakout Expansion",
+        regime: context.regime,
+        summary: `Breakout expansion short. 5m range position ${context.rangePosition5m.toFixed(2)}, breakout pressure ${(context.breakoutPressure * 100).toFixed(0)}%, book imbalance ${context.bookImbalance.toFixed(2)}.`,
+        momentumPercent: context.momentum5mPercent,
+        mediumMomentumPercent: context.mediumMomentumPercent,
+        spreadPercent: context.spreadPercent,
+        volatilityPercent: context.realizedVolatilityPercent,
+        rangePosition: context.rangePosition5m,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.4,
+        sizeMultiplier: 0.9 + context.executionQuality * 0.2,
+        expectedHoldMinutes: 120,
         atrPercent: context.atr5mPercent,
         trend1hPercent: context.trend1hPercent,
         trend15mPercent: context.trend15mPercent,
@@ -1877,69 +1882,95 @@ class StateStore {
       });
     }
 
-    if (isFutures && breakoutShort && context.regime !== "Risk On") {
-      const confidence = 0.6 + context.breakoutPressure * 0.14 + Math.max(-context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(context.atr5mPercent, 0.62), 0.62, 1.4);
-      addCandidate({
-        action: "SHORT",
-        confidence,
-        type: "BREAKOUT_EXPANSION",
-        module: "Breakout Expansion",
-        regime: context.regime,
-        summary: `Breakout expansion short. Higher timeframes are aligned down, 5m breakout pressure is ${(context.breakoutPressure * 100).toFixed(0)}%, book imbalance ${context.bookImbalance.toFixed(2)}, spread ${context.spreadBps.toFixed(1)} bps.`,
-        momentumPercent: context.momentum5mPercent,
-        mediumMomentumPercent: context.mediumMomentumPercent,
-        spreadPercent: context.spreadPercent,
-        volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition5m,
-        stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.1,
-        sizeMultiplier: 0.74 + context.executionQuality * 0.1,
-        expectedHoldMinutes: 90,
-        atrPercent: context.atr5mPercent,
-        trend1hPercent: context.trend1hPercent,
-        trend15mPercent: context.trend15mPercent,
-        spreadBps: context.spreadBps,
-        bookImbalance: context.bookImbalance,
-        liquidityUsd: context.liquidityUsd,
-        executionQuality: context.executionQuality
-      });
+    if (rangeFriendly && context.executionQuality >= 0.5 && context.spreadBps <= 12) {
+      if (context.meanReversionStretch <= -0.95 && context.rangePosition5m < 0.24) {
+        const confidence = 0.55 + Math.min(Math.abs(context.meanReversionStretch) * 0.08, 0.16) + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
+        const stopLossPercent = clamp(Math.max(context.atr5mPercent * 0.9, 0.58), 0.58, 1.25);
+        addCandidate({
+          action: "LONG",
+          confidence,
+          type: "MEAN_REVERSION",
+          module: "Mean Reversion",
+          regime: context.regime,
+          summary: `Mean reversion long. Stretch ${context.meanReversionStretch.toFixed(2)}σ, range position ${context.rangePosition5m.toFixed(2)}, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+          momentumPercent: context.momentum5mPercent,
+          mediumMomentumPercent: context.mediumMomentumPercent,
+          spreadPercent: context.spreadPercent,
+          volatilityPercent: context.realizedVolatilityPercent,
+          rangePosition: context.rangePosition5m,
+          stopLossPercent,
+          takeProfitPercent: stopLossPercent * 1.7,
+          sizeMultiplier: 0.7 + context.executionQuality * 0.12,
+          expectedHoldMinutes: 75,
+          atrPercent: context.atr5mPercent,
+          trend1hPercent: context.trend1hPercent,
+          trend15mPercent: context.trend15mPercent,
+          spreadBps: context.spreadBps,
+          bookImbalance: context.bookImbalance,
+          liquidityUsd: context.liquidityUsd,
+          executionQuality: context.executionQuality
+        });
+      }
+      if (context.meanReversionStretch >= 0.95 && context.rangePosition5m > 0.76) {
+        const confidence = 0.55 + Math.min(Math.abs(context.meanReversionStretch) * 0.08, 0.16) + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
+        const stopLossPercent = clamp(Math.max(context.atr5mPercent * 0.9, 0.58), 0.58, 1.25);
+        addCandidate({
+          action: "SHORT",
+          confidence,
+          type: "MEAN_REVERSION",
+          module: "Mean Reversion",
+          regime: context.regime,
+          summary: `Mean reversion short. Stretch ${context.meanReversionStretch.toFixed(2)}σ, range position ${context.rangePosition5m.toFixed(2)}, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+          momentumPercent: context.momentum5mPercent,
+          mediumMomentumPercent: context.mediumMomentumPercent,
+          spreadPercent: context.spreadPercent,
+          volatilityPercent: context.realizedVolatilityPercent,
+          rangePosition: context.rangePosition5m,
+          stopLossPercent,
+          takeProfitPercent: stopLossPercent * 1.7,
+          sizeMultiplier: 0.7 + context.executionQuality * 0.12,
+          expectedHoldMinutes: 75,
+          atrPercent: context.atr5mPercent,
+          trend1hPercent: context.trend1hPercent,
+          trend15mPercent: context.trend15mPercent,
+          spreadBps: context.spreadBps,
+          bookImbalance: context.bookImbalance,
+          liquidityUsd: context.liquidityUsd,
+          executionQuality: context.executionQuality
+        });
+      }
     }
 
     candidates.sort((left, right) => right.confidence - left.confidence);
     const lead = candidates[0] ?? null;
-    const observation: StrategyObservation = lead
-      ? {
-          action: lead.action,
-          type: lead.type,
-          confidence: lead.confidence,
-          summary: lead.summary,
-          regime: lead.regime,
-          spreadPercent: lead.spreadPercent,
-          momentumPercent: lead.momentumPercent,
-          candidateCount: candidates.length,
-          executionQuality: lead.executionQuality,
-          atrPercent: lead.atrPercent
-        }
-      : {
-          action: "HOLD",
-          type: "OBSERVATION",
-          confidence: round(clamp(0.5 + Math.abs(context.trend15mPercent) * 0.25 + context.executionQuality * 0.08, 0.5, 0.74), 2),
-          summary: isSpot
-            ? `No bounded spot setup. ProofTrader only takes long spot entries when the higher timeframe trend, pullback shape, spread, and execution quality align.`
-            : `No bounded futures setup. ProofTrader requires directional alignment, controlled volatility, and clean execution before taking leveraged entries.`,
-          regime: context.regime,
-          spreadPercent: context.spreadPercent,
-          momentumPercent: context.momentum5mPercent,
-          candidateCount: 0,
-          executionQuality: context.executionQuality,
-          atrPercent: atrPercent
-        };
+    const observation: StrategyObservation = lead ? {
+      action: lead.action,
+      type: lead.type,
+      confidence: lead.confidence,
+      summary: lead.summary,
+      regime: context.regime,
+      spreadPercent: lead.spreadPercent,
+      momentumPercent: lead.momentumPercent,
+      candidateCount: candidates.length,
+      executionQuality: context.executionQuality,
+      atrPercent: context.atr15mPercent
+    } : {
+      action: "HOLD",
+      type: "OBSERVATION",
+      confidence: round(clamp(0.5 + context.executionQuality * 0.18 - spreadPenalty, 0.5, 0.72), 2),
+      summary: `No bounded setup. Regime ${context.regime}, 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, spread ${context.spreadBps.toFixed(1)} bps.`,
+      regime: context.regime,
+      spreadPercent: context.spreadPercent,
+      momentumPercent: context.momentum5mPercent,
+      candidateCount: 0,
+      executionQuality: context.executionQuality,
+      atrPercent: context.atr15mPercent
+    };
 
     return { observation, candidates };
   }
 
-  private buildStrategyCandidates(symbol: string, history: number[], accountMode: ExchangeAccountMode = "spot"): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
+  private buildStrategyCandidates(symbol: string, history: number[]): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
     const latest = history[history.length - 1] ?? 0;
     const fastWindow = history.slice(-3);
     const mediumWindow = history.slice(-5);
@@ -1963,13 +1994,8 @@ class StateStore {
     const rangePosition = rangeSpan <= 0 ? 0.5 : (latest - rangeLow) / rangeSpan;
     const pullbackPercent = fastAverage === 0 ? 0 : ((latest - fastAverage) / fastAverage) * 100;
     const candidates: StrategyCandidate[] = [];
-    const isSpot = accountMode === "spot";
-    const isFutures = accountMode === "futures";
 
     const addCandidate = (candidate: Omit<StrategyCandidate, "id" | "symbol" | "price" | "atrPercent" | "trend1hPercent" | "trend15mPercent" | "spreadBps" | "bookImbalance" | "liquidityUsd" | "executionQuality">) => {
-      if (isSpot && candidate.action === "SHORT") {
-        return;
-      }
       candidates.push({
         id: generateId("CAND"),
         symbol,
@@ -1981,9 +2007,9 @@ class StateStore {
         spreadPercent: round(candidate.spreadPercent, 3),
         volatilityPercent: round(candidate.volatilityPercent, 3),
         rangePosition: round(candidate.rangePosition, 3),
-        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, isFutures ? 1.8 : 1.9), 2),
-        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, isFutures ? 3.6 : 4.0), 2),
-        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.45, 1.1), 2),
+        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, 2.0), 2),
+        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, 4.0), 2),
+        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.6, 1.25), 2),
         atrPercent: round(volatilityPercent, 3),
         trend1hPercent: round(spreadPercent, 3),
         trend15mPercent: round(mediumMomentumPercent, 3),
@@ -1994,60 +2020,57 @@ class StateStore {
       });
     };
 
-    const trendLong = fastAverage > mediumAverage && mediumAverage > slowAverage && mediumMomentumPercent > 0.12 && rangePosition >= 0.35 && rangePosition <= 0.78;
-    const trendShort = fastAverage < mediumAverage && mediumAverage < slowAverage && mediumMomentumPercent < -0.12 && rangePosition <= 0.65 && rangePosition >= 0.22;
+    const trendLong = fastAverage > mediumAverage && mediumAverage > slowAverage && mediumMomentumPercent > 0.12 && rangePosition > 0.32;
+    const trendShort = fastAverage < mediumAverage && mediumAverage < slowAverage && mediumMomentumPercent < -0.12 && rangePosition < 0.68;
     const trendStrength = Math.abs(spreadPercent) + Math.abs(mediumMomentumPercent);
-
-    if (trendLong && volatilityPercent <= 2.8 && pullbackPercent >= -0.7) {
-      const confidence = 0.57 + Math.abs(spreadPercent) * 0.75 + Math.abs(mediumMomentumPercent) * 0.26 - volatilityPercent * 0.04 + (pullbackPercent <= 0 ? 0.05 : 0.02);
-      const stopLossPercent = clamp(0.75 + volatilityPercent * (isFutures ? 1.25 : 1.45), 0.7, isFutures ? 1.6 : 1.8);
+    if (trendLong) {
+      const confidence = 0.55 + Math.abs(spreadPercent) * 0.8 + Math.abs(mediumMomentumPercent) * 0.28 - volatilityPercent * 0.05 + (pullbackPercent <= 0 ? 0.05 : 0);
+      const stopLossPercent = clamp(0.75 + volatilityPercent * 1.8, 0.7, 1.6);
       addCandidate({
         action: "LONG",
         confidence,
-        type: "TREND_PULLBACK",
-        module: "Trend Pullback",
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
         regime: "Bull Trend",
-        summary: `Trend pullback long. Fast trend is above slow trend with ${mediumMomentumPercent.toFixed(2)}% medium momentum and ${spreadPercent.toFixed(2)}% spread alignment.`,
+        summary: `Trend continuation long. Fast trend is above slow trend with ${mediumMomentumPercent.toFixed(2)}% medium momentum and ${spreadPercent.toFixed(2)}% spread alignment.`,
         momentumPercent,
         mediumMomentumPercent,
         spreadPercent,
         volatilityPercent,
         rangePosition,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * (isFutures ? 2.0 : 2.2),
-        sizeMultiplier: isFutures ? 0.78 : pullbackPercent <= 0 ? 0.95 : 0.82,
-        expectedHoldMinutes: isFutures ? 180 : 240
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: pullbackPercent <= 0 ? 1.05 : 0.95,
+        expectedHoldMinutes: 180
       });
     }
-
-    if (isFutures && trendShort && volatilityPercent <= 2.8 && pullbackPercent <= 0.7) {
-      const confidence = 0.57 + Math.abs(spreadPercent) * 0.75 + Math.abs(mediumMomentumPercent) * 0.26 - volatilityPercent * 0.04 + (pullbackPercent >= 0 ? 0.05 : 0.02);
-      const stopLossPercent = clamp(0.75 + volatilityPercent * 1.25, 0.7, 1.6);
+    if (trendShort) {
+      const confidence = 0.55 + Math.abs(spreadPercent) * 0.8 + Math.abs(mediumMomentumPercent) * 0.28 - volatilityPercent * 0.05 + (pullbackPercent >= 0 ? 0.05 : 0);
+      const stopLossPercent = clamp(0.75 + volatilityPercent * 1.8, 0.7, 1.6);
       addCandidate({
         action: "SHORT",
         confidence,
-        type: "TREND_PULLBACK",
-        module: "Trend Pullback",
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
         regime: "Bear Trend",
-        summary: `Trend pullback short. Fast trend is below slow trend with ${mediumMomentumPercent.toFixed(2)}% medium momentum and ${spreadPercent.toFixed(2)}% spread alignment.`,
+        summary: `Trend continuation short. Fast trend is below slow trend with ${mediumMomentumPercent.toFixed(2)}% medium momentum and ${spreadPercent.toFixed(2)}% spread alignment.`,
         momentumPercent,
         mediumMomentumPercent,
         spreadPercent,
         volatilityPercent,
         rangePosition,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.0,
-        sizeMultiplier: 0.78,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: pullbackPercent >= 0 ? 1.05 : 0.95,
         expectedHoldMinutes: 180
       });
     }
 
-    const breakoutLong = rangePosition > 0.86 && momentumPercent > 0.16 && spreadPercent > 0.06;
-    const breakoutShort = rangePosition < 0.14 && momentumPercent < -0.16 && spreadPercent < -0.06;
-
-    if (breakoutLong && volatilityPercent <= 2.4) {
-      const confidence = 0.56 + Math.abs(momentumPercent) * 0.32 + Math.abs(spreadPercent) * 0.72 + Math.max(rangePosition - 0.86, 0) * 0.2 - volatilityPercent * 0.03;
-      const stopLossPercent = clamp(0.65 + volatilityPercent * (isFutures ? 1.0 : 1.2), 0.6, isFutures ? 1.35 : 1.45);
+    const breakoutLong = rangePosition > 0.84 && momentumPercent > 0.18 && spreadPercent > 0.05;
+    const breakoutShort = rangePosition < 0.16 && momentumPercent < -0.18 && spreadPercent < -0.05;
+    if (breakoutLong) {
+      const confidence = 0.54 + Math.abs(momentumPercent) * 0.35 + Math.abs(spreadPercent) * 0.75 + Math.max(rangePosition - 0.84, 0) * 0.2 - volatilityPercent * 0.03;
+      const stopLossPercent = clamp(0.65 + volatilityPercent * 1.3, 0.6, 1.3);
       addCandidate({
         action: "LONG",
         confidence,
@@ -2061,15 +2084,14 @@ class StateStore {
         volatilityPercent,
         rangePosition,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * (isFutures ? 2.1 : 2.35),
-        sizeMultiplier: isFutures ? 0.74 : 0.88,
-        expectedHoldMinutes: isFutures ? 90 : 120
+        takeProfitPercent: stopLossPercent * 2.6,
+        sizeMultiplier: 1.1,
+        expectedHoldMinutes: 120
       });
     }
-
-    if (isFutures && breakoutShort && volatilityPercent <= 2.4) {
-      const confidence = 0.56 + Math.abs(momentumPercent) * 0.32 + Math.abs(spreadPercent) * 0.72 + Math.max(0.14 - rangePosition, 0) * 0.2 - volatilityPercent * 0.03;
-      const stopLossPercent = clamp(0.65 + volatilityPercent, 0.6, 1.35);
+    if (breakoutShort) {
+      const confidence = 0.54 + Math.abs(momentumPercent) * 0.35 + Math.abs(spreadPercent) * 0.75 + Math.max(0.16 - rangePosition, 0) * 0.2 - volatilityPercent * 0.03;
+      const stopLossPercent = clamp(0.65 + volatilityPercent * 1.3, 0.6, 1.3);
       addCandidate({
         action: "SHORT",
         confidence,
@@ -2083,8 +2105,54 @@ class StateStore {
         volatilityPercent,
         rangePosition,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.1,
-        sizeMultiplier: 0.74,
+        takeProfitPercent: stopLossPercent * 2.6,
+        sizeMultiplier: 1.1,
+        expectedHoldMinutes: 120
+      });
+    }
+
+    const rangeMarket = Math.abs(spreadPercent) < 0.22;
+    const meanReversionLong = rangeMarket && rangePosition < 0.18 && momentumPercent < -0.08;
+    const meanReversionShort = rangeMarket && rangePosition > 0.82 && momentumPercent > 0.08;
+    if (meanReversionLong) {
+      const confidence = 0.53 + Math.abs(momentumPercent) * 0.32 + Math.max(0.18 - rangePosition, 0) * 0.35 - volatilityPercent * 0.02;
+      const stopLossPercent = clamp(0.6 + volatilityPercent, 0.6, 1.0);
+      addCandidate({
+        action: "LONG",
+        confidence,
+        type: "MEAN_REVERSION",
+        module: "Mean Reversion",
+        regime: "Range Reversal",
+        summary: `Mean reversion long. Price is stretched into the lower end of the range while the broader spread remains contained.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 1.7,
+        sizeMultiplier: 0.8,
+        expectedHoldMinutes: 90
+      });
+    }
+    if (meanReversionShort) {
+      const confidence = 0.53 + Math.abs(momentumPercent) * 0.32 + Math.max(rangePosition - 0.82, 0) * 0.35 - volatilityPercent * 0.02;
+      const stopLossPercent = clamp(0.6 + volatilityPercent, 0.6, 1.0);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "MEAN_REVERSION",
+        module: "Mean Reversion",
+        regime: "Range Reversal",
+        summary: `Mean reversion short. Price is stretched into the upper end of the range while the broader spread remains contained.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 1.7,
+        sizeMultiplier: 0.8,
         expectedHoldMinutes: 90
       });
     }
@@ -2107,11 +2175,9 @@ class StateStore {
           type: history.length < 5 ? "WARMUP" : "OBSERVATION",
           confidence: round(clamp(0.5 + trendStrength * 0.08, 0.5, 0.72), 2),
           summary: history.length < 5
-            ? `Warmup only. ${symbol} needs a few more data points before the strategy engine can score bounded candidates.`
-            : isSpot
-              ? `No bounded spot setup. Spot mode is long only and requires trend alignment plus controlled pullback or breakout structure.`
-              : `No bounded futures setup. Futures mode requires directional alignment, controlled volatility, and disciplined breakout or pullback structure.`,
-          regime: history.length < 5 ? "Warmup" : spreadPercent >= 0 ? "Uptrend Watch" : "Downtrend Watch",
+            ? `Warmup only. ${symbol} needs a few more data points before the AI engine can score bounded candidates.`
+            : `No bounded setup. Spread ${spreadPercent.toFixed(2)}%, short momentum ${momentumPercent.toFixed(2)}%, volatility ${volatilityPercent.toFixed(2)}%.`,
+          regime: history.length < 5 ? "Warmup" : rangeMarket ? "Range" : spreadPercent >= 0 ? "Uptrend Watch" : "Downtrend Watch",
           spreadPercent: round(spreadPercent, 3),
           momentumPercent: round(momentumPercent, 3),
           candidateCount: 0
@@ -2144,9 +2210,6 @@ class StateStore {
     if (context.spreadPercent > policy.spreadGuardrailPercent) {
       return `Spread ${context.spreadPercent.toFixed(3)}% is above the ${policy.spreadGuardrailPercent.toFixed(3)}% guardrail.`;
     }
-    if (orderPreview.accountMode === "spot" && candidate.action === "SHORT") {
-      return "Spot mode is long only. Short entries are reserved for futures mode.";
-    }
     if (context.executionQuality < 0.45) {
       return `Execution quality ${(context.executionQuality * 100).toFixed(0)}% is too weak for a professional entry.`;
     }
@@ -2158,12 +2221,6 @@ class StateStore {
     }
     if (Math.abs(context.bookImbalance) > 0.55 && ((candidate.action === "LONG" && context.bookImbalance < 0) || (candidate.action === "SHORT" && context.bookImbalance > 0))) {
       return `Order-book imbalance ${context.bookImbalance.toFixed(2)} is adverse to a ${candidate.action} entry.`;
-    }
-    if (orderPreview.accountMode === "spot" && context.trend1hPercent <= 0.12) {
-      return `Spot entries require a positive higher-timeframe trend. Current 1h trend is ${context.trend1hPercent.toFixed(2)}%.`;
-    }
-    if (orderPreview.accountMode === "futures" && Math.abs(context.trend1hPercent) < 0.14) {
-      return `Futures entries require a clearer higher-timeframe trend. Current 1h trend is ${context.trend1hPercent.toFixed(2)}%.`;
     }
     if (orderPreview.accountMode === "futures") {
       if (orderPreview.leverage > policy.futuresMaxLeverage) {
@@ -2199,9 +2256,8 @@ class StateStore {
     const availableBalance = Math.max(snapshot.paper.balance, availableBalanceCard?.value ?? 0, 0);
     const totalEquity = Math.max(snapshot.paper.equity, equityCard?.value ?? availableBalance, availableBalance);
     const drawdownPenalty = clamp(1 - currentDrawdownPercent(snapshot) / 20, 0.55, 1);
-    const modeRiskFactor = accountMode === "futures" ? 0.75 : 1;
-    const riskBudget = totalEquity * (policy.perTradeRiskPercent / 100) * drawdownPenalty * modeRiskFactor;
-    const sizeMultiplier = clamp(tuning?.sizeMultiplier ?? 1, 0.45, 1.1);
+    const riskBudget = totalEquity * (policy.perTradeRiskPercent / 100) * drawdownPenalty;
+    const sizeMultiplier = clamp(tuning?.sizeMultiplier ?? 1, 0.55, 1.25);
     const executionQuality = clamp(tuning?.executionQuality ?? 0.8, 0.4, 1.15);
     const rawAtrPercent = clamp(tuning?.atrPercent ?? 1.1, 0.45, 4);
     const rawVolatilityPercent = clamp(tuning?.volatilityPercent ?? rawAtrPercent, 0.35, 8);
@@ -2213,15 +2269,15 @@ class StateStore {
     if (accountMode === "futures") {
       const requestedLeverage = Math.min(
         Math.max(Math.round(tuning?.requestedLeverage ?? snapshot.settings.exchange.futuresLeverage ?? 2), 1),
-        Math.min(policy.futuresMaxLeverage, 3)
+        policy.futuresMaxLeverage
       );
-      const volatilityCap = rawVolatilityPercent >= 2.1 ? 1 : rawVolatilityPercent >= 1.35 ? 2 : 3;
+      const volatilityCap = rawVolatilityPercent >= 2.4 ? 1 : rawVolatilityPercent >= 1.8 ? 2 : rawVolatilityPercent >= 1.2 ? 3 : requestedLeverage;
       leverage = Math.min(requestedLeverage, volatilityCap);
-      if (executionQuality < 0.68) {
+      if (executionQuality < 0.62) {
         leverage = Math.min(leverage, 2);
       }
-      if (currentDrawdownPercent(snapshot) >= policy.futuresMaxDrawdownPercent * 0.5) {
-        leverage = 1;
+      if (currentDrawdownPercent(snapshot) >= policy.futuresMaxDrawdownPercent * 0.65) {
+        leverage = Math.min(leverage, 2);
       }
       leverage = Math.max(leverage, 1);
     }
@@ -2245,7 +2301,7 @@ class StateStore {
     const notionalFromRisk = riskBudget / Math.max(stopDistancePercent, 0.001);
     const configuredNotional = Math.max(snapshot.strategy.runner.tradeSizeUsd * sizeMultiplier * executionQuality * volatilityPenalty, 0);
     const liquidityCap = tuning?.liquidityUsd ? tuning.liquidityUsd * 0.08 : Number.POSITIVE_INFINITY;
-    const capitalCap = accountMode === "futures" ? availableBalance * leverage * 0.25 : availableBalance * 0.35;
+    const capitalCap = accountMode === "futures" ? availableBalance * leverage * 0.45 : availableBalance;
     const instrumentCap = accountMode === "futures" ? policy.futuresMaxPositionNotionalUsd : policy.maxPositionSizeUsd;
     const cappedNotional = Math.min(configuredNotional, instrumentCap, capitalCap, notionalFromRisk, liquidityCap);
     const rawSize = price === 0 ? 0 : cappedNotional / price;
@@ -2328,16 +2384,26 @@ class StateStore {
       const normalizedBalance = krakenCliService.normalizePaperStatus(balancePayload);
       const recentOrders = krakenCliService.normalizePaperHistory(historyPayload).slice(0, 8);
       const syncedAt = new Date().toISOString();
-      const balance = normalizedBalance.balance > 0
+      const spotMarketValue = positions
+        .filter((position) => inferPositionAccountMode(position) === "spot")
+        .reduce((sum, position) => sum + (position.currentPrice * position.size), 0);
+      const futuresLockedCollateral = positions
+        .filter((position) => inferPositionAccountMode(position) === "futures")
+        .reduce((sum, position) => sum + position.collateral, 0);
+      const futuresUnrealized = positions
+        .filter((position) => inferPositionAccountMode(position) === "futures")
+        .reduce((sum, position) => sum + position.unrealizedPnL, 0);
+      const normalizedFreeBalance = normalizedBalance.balance > 0
         ? round(normalizedBalance.balance, 2)
         : normalizedStatus.balance > 0
           ? round(normalizedStatus.balance, 2)
           : snapshot.paper.balance;
+      const balance = mode === "futures" && positions.length > 0
+        ? round(snapshot.paper.balance, 2)
+        : normalizedFreeBalance;
       const equity = positions.length === 0
         ? round(balance, 2)
-        : normalizedStatus.equity > 0
-          ? round(normalizedStatus.equity, 2)
-          : round(balance + openUnrealized, 2);
+        : round(balance + spotMarketValue + futuresLockedCollateral + futuresUnrealized, 2);
 
       snapshot.paper = {
         ...snapshot.paper,
@@ -2672,7 +2738,7 @@ class StateStore {
       }
 
       const history = this.rememberPrice(symbol, price);
-      let analysis = this.buildStrategyCandidates(symbol, history, accountMode);
+      let analysis = this.buildStrategyCandidates(symbol, history);
       let marketContext: MarketContext | null = null;
 
       try {
@@ -2689,7 +2755,7 @@ class StateStore {
 
         if (candles5m.length >= 10 && candles15m.length >= 10 && candles1h.length >= 10) {
           marketContext = this.buildMarketContext(symbol, price, candles5m, candles15m, candles1h, depthMetrics);
-          analysis = this.buildExecutionAwareCandidates(symbol, marketContext, accountMode);
+          analysis = this.buildExecutionAwareCandidates(symbol, marketContext);
           marketContextBySymbol.set(symbol, marketContext);
         }
       } catch (error) {
@@ -3446,8 +3512,8 @@ class StateStore {
       riskCheckId: artifact.riskCheckId
     }));
 
-    const fallbackHistoryTrades = mappedTrades.length === 0 && base.paper.recentOrders.length > 0
-      ? base.paper.recentOrders.map((order) => ({
+    if (mappedTrades.length === 0 && base.paper.recentOrders.length > 0) {
+      mappedTrades = base.paper.recentOrders.map((order) => ({
         id: order.id,
         accountMode: order.accountMode,
         symbol: order.symbol,
@@ -3468,8 +3534,8 @@ class StateStore {
         signalSummary: "Imported from Kraken paper history.",
         riskSummary: "External paper order synced from Kraken CLI.",
         artifactId: null
-      }))
-      : [];
+      }));
+    }
 
     const closedTrades = mappedTrades.filter((trade) => trade.status === "Closed");
     const winningTrades = closedTrades.filter((trade) => trade.realizedPnL > 0);
@@ -3484,7 +3550,18 @@ class StateStore {
     const availableBalance = base.settings.exchange.paperTrading && base.paper.initialized
       ? round(base.paper.balance, 2)
       : round(storedAvailableBalance, 2);
-    const totalEquity = computePaperEquity(availableBalance, mappedPositions);
+    const spotMarketValue = mappedPositions
+      .filter((position) => position.accountMode === "spot")
+      .reduce((sum, position) => sum + (position.currentPrice * position.size), 0);
+    const futuresLockedCollateral = mappedPositions
+      .filter((position) => position.accountMode === "futures")
+      .reduce((sum, position) => sum + position.collateral, 0);
+    const futuresUnrealized = mappedPositions
+      .filter((position) => position.accountMode === "futures")
+      .reduce((sum, position) => sum + position.unrealizedPnL, 0);
+    const totalEquity = base.settings.exchange.paperTrading && base.paper.initialized
+      ? round(availableBalance + spotMarketValue + futuresLockedCollateral + futuresUnrealized, 2)
+      : round(availableBalance + openUnrealized, 2);
 
     const equityCurve = buildEquityCurve(mappedTrades, totalEquity, openUnrealized);
     const maxDrawdown = computeMaxDrawdown(equityCurve);
@@ -3622,10 +3699,10 @@ class StateStore {
     const leverageLabel = accountMode === "futures" ? `${base.settings.exchange.futuresLeverage}x` : "1x";
     base.dashboard.equityCurve = equityCurve;
     base.dashboard.openPositionsPreview = mappedPositions;
-    base.dashboard.recentTradesPreview = (mappedTrades.length > 0 ? mappedTrades : fallbackHistoryTrades).slice(0, 3);
+    base.dashboard.recentTradesPreview = mappedTrades.slice(0, 3);
     base.dashboard.recentArtifacts = mappedArtifacts.slice(0, 3);
     base.dashboard.recentSignals = recentSignals;
-    base.dashboard.totalTrades = mappedTrades.length;
+    base.dashboard.totalTrades = Math.max(mappedTrades.length, base.paper.tradeCount);
     base.dashboard.winRate = winRate;
     base.dashboard.maxDrawdown = maxDrawdown;
     base.dashboard.sharpeRatio = sharpeRatio;
@@ -4349,13 +4426,14 @@ class StateStore {
     });
 
     const availableBalanceCard = snapshot.dashboard.metricCards.find((card) => card.label === "Available Balance");
-    if (availableBalanceCard) {
-      const balanceDebit = accountMode === "futures" ? collateral + fees : notional + fees;
-      snapshot.paper.balance = round(Math.max(availableBalanceCard.value - balanceDebit, 0), 2);
-      setMetricValue(snapshot, "Available Balance", snapshot.paper.balance);
-    }
-    snapshot.paper.tradeCount = Math.max(snapshot.paper.tradeCount + 1, snapshot.trades.length + 1);
-    snapshot.paper.openPositionCount = snapshot.positions.length + 1;
+    const balanceDebit = accountMode === "futures" ? collateral + fees : notional + fees;
+    const nextAvailableBalance = round((availableBalanceCard?.value ?? snapshot.paper.balance) - balanceDebit, 2);
+    snapshot.paper.balance = nextAvailableBalance;
+    snapshot.paper.unrealizedPnL = round(snapshot.paper.unrealizedPnL, 2);
+    snapshot.paper.equity = round(nextAvailableBalance + (accountMode === "futures" ? collateral : notional), 2);
+    snapshot.paper.openPositionCount = snapshot.paper.openPositionCount + 1;
+    setMetricValue(snapshot, "Available Balance", nextAvailableBalance, `${accountModeLabel(accountMode)} paper cash`);
+    setMetricValue(snapshot, "Total Equity", snapshot.paper.equity, `Paper Trading ${accountModeLabel(accountMode)}`);
 
     await this.recordJob(workspaceId, `kraken.${accountMode}.paper.trade`, "Completed", 100, {
       tradeId,
