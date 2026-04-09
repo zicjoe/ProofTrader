@@ -121,9 +121,7 @@ export function DashboardLayout() {
         } overflow-hidden`}
       >
         <div className="flex items-center gap-3 px-6 py-5 border-b border-zinc-800">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">PT</span>
-          </div>
+          <img src="/logo.png" alt="ProofTrader logo" className="h-8 w-8 rounded-lg object-contain" />
           <div className="flex-1">
             <h1 className="text-white font-semibold">ProofTrader</h1>
             <p className="text-xs text-zinc-400">Autonomous Agent</p>

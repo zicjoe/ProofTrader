@@ -24,9 +24,7 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold">PT</span>
-              </div>
+              <img src="/logo.png" alt="ProofTrader logo" className="h-10 w-10 rounded-lg object-contain" />
               <div>
                 <h1 className="text-xl font-bold">ProofTrader</h1>
                 <p className="text-xs text-zinc-400">Autonomous Trading Agent</p>
@@ -402,9 +400,7 @@ export function LandingPage() {
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-violet-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">PT</span>
-                </div>
+                <img src="/logo.png" alt="ProofTrader logo" className="h-8 w-8 rounded-lg object-contain" />
                 <span className="font-bold">ProofTrader</span>
               </div>
               <p className="text-sm text-zinc-400">

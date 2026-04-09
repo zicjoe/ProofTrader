@@ -95,7 +95,9 @@ export class KrakenCliService {
   private binary = process.env.KRAKEN_CLI_PATH || "kraken";
   private wslBinary = process.env.KRAKEN_WSL_PATH || "C:\\Windows\\System32\\wsl.exe";
   private runnerUrl = (process.env.KRAKEN_RUNNER_URL || "").trim().replace(/\/$/, "");
-  
+  private runnerTimeoutMs = Math.max(Number(process.env.KRAKEN_RUNNER_TIMEOUT_MS ?? 10000), 1000);
+  private runnerGetRetries = Math.max(Number(process.env.KRAKEN_RUNNER_GET_RETRIES ?? 2), 0);
+
   private async run(args: string[]) {
     const command = this.useWsl ? this.wslBinary : this.binary;
     const commandArgs = this.useWsl ? [this.binary, ...args] : args;
@@ -153,30 +155,64 @@ export class KrakenCliService {
     }
 
     const method = options?.method ?? "GET";
-    const response = await fetch(`${this.runnerUrl}${path}`, {
-      method,
-      headers: method === "POST" ? { "content-type": "application/json" } : undefined,
-      body: method === "POST" && options?.body !== undefined ? JSON.stringify(options.body) : undefined
-    });
+    const maxAttempts = method === "GET" ? this.runnerGetRetries + 1 : 1;
+    let lastError: Error | null = null;
 
-    const text = await response.text();
-    let payload: unknown = null;
-    if (text) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.runnerTimeoutMs);
+
       try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = text;
+        const response = await fetch(`${this.runnerUrl}${path}`, {
+          method,
+          headers: method === "POST" ? { "content-type": "application/json" } : undefined,
+          body: method === "POST" && options?.body !== undefined ? JSON.stringify(options.body) : undefined,
+          signal: controller.signal
+        });
+
+        const text = await response.text();
+        let payload: unknown = null;
+        if (text) {
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            payload = text;
+          }
+        }
+
+        if (!response.ok) {
+          const message = typeof payload === "object" && payload && "message" in (payload as Record<string, unknown>)
+            ? String((payload as Record<string, unknown>).message)
+            : `Kraken runner returned ${response.status}`;
+          const retryable = method === "GET" && [408, 425, 429, 500, 502, 503, 504].includes(response.status) && attempt < maxAttempts;
+          if (retryable) {
+            await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+            continue;
+          }
+          throw new Error(message);
+        }
+
+        return payload as T;
+      } catch (error) {
+        const isAbort = error instanceof Error && error.name === "AbortError";
+        const message = isAbort
+          ? `Kraken runner request timed out after ${this.runnerTimeoutMs}ms`
+          : error instanceof Error
+            ? error.message
+            : "Unknown Kraken runner request failure.";
+        lastError = new Error(message);
+
+        if (method !== "GET" || attempt >= maxAttempts) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
-    if (!response.ok) {
-      const message = typeof payload === "object" && payload && "message" in (payload as Record<string, unknown>)
-        ? String((payload as Record<string, unknown>).message)
-        : `Kraken runner returned ${response.status}`;
-      throw new Error(message);
-    }
-
-    return payload as T;
+    throw lastError ?? new Error("Kraken runner request failed.");
   }
 
   private maybeMock(value: unknown) {

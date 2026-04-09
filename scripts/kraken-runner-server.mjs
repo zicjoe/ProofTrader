@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -7,6 +9,24 @@ const PORT = Number(process.env.PORT || 4011);
 let paperQueue = Promise.resolve();
 const BINARY = process.env.KRAKEN_CLI_PATH || "kraken";
 const enabled = String(process.env.KRAKEN_CLI_ENABLED).toLowerCase() === "true";
+const STATE_DIR = process.env.KRAKEN_RUNNER_STATE_DIR || "/data/kraken-runner";
+
+configureRunnerState(STATE_DIR);
+
+function configureRunnerState(stateDir) {
+  const configDir = join(stateDir, ".config");
+  const dataDir = join(stateDir, ".local", "share");
+  const cacheDir = join(stateDir, ".cache");
+
+  for (const dir of [stateDir, configDir, dataDir, cacheDir]) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  process.env.HOME = stateDir;
+  process.env.XDG_CONFIG_HOME = configDir;
+  process.env.XDG_DATA_HOME = dataDir;
+  process.env.XDG_CACHE_HOME = cacheDir;
+}
 
 function sendJson(res, status, payload) {
   res.writeHead(status, { "content-type": "application/json" });
@@ -58,13 +78,38 @@ function modeArgs(mode, command) {
   return mode === "futures" ? ["futures", "paper", command, "-o", "json"] : ["paper", command, "-o", "json"];
 }
 
+async function initPaperAccount(mode, balance) {
+  const args = mode === "futures"
+    ? ["futures", "paper", "init", "--balance", String(balance), "-o", "json"]
+    : ["paper", "init", "--balance", String(balance), "-o", "json"];
+
+  try {
+    return await runPaperCli(args);
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    if (message.includes("already initialized")) {
+      return runPaperCli(modeArgs(mode, "status"));
+    }
+    throw error;
+  }
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", `http://127.0.0.1:${PORT}`);
     console.log(`[runner] ${req.method} ${url.pathname}${url.search}`);
 
     if (req.method === "GET" && url.pathname === "/health") {
-      return sendJson(res, 200, { ok: true, service: "kraken-runner", cliEnabled: enabled, binary: BINARY });
+      return sendJson(res, 200, {
+        ok: true,
+        service: "kraken-runner",
+        cliEnabled: enabled,
+        binary: BINARY,
+        stateDir: STATE_DIR,
+        homeDir: process.env.HOME,
+        xdgConfigHome: process.env.XDG_CONFIG_HOME,
+        xdgDataHome: process.env.XDG_DATA_HOME
+      });
     }
 
     if (req.method === "GET" && url.pathname === "/v1/market/ticker") {
@@ -90,8 +135,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const balance = Number(body.balance ?? 10000);
       const mode = body.mode === "futures" ? "futures" : "spot";
-      const args = mode === "futures" ? ["futures", "paper", "init", "--balance", String(balance), "-o", "json"] : ["paper", "init", "--balance", String(balance), "-o", "json"];
-      return sendJson(res, 200, await runPaperCli(args));
+      return sendJson(res, 200, await initPaperAccount(mode, balance));
     }
 
     if (req.method === "GET" && url.pathname === "/v1/paper/status") {
@@ -154,4 +198,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[runner] listening on ${PORT}`);
+  console.log(`[runner] state dir ${STATE_DIR}`);
 });
