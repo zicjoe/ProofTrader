@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "npm run db:generate && tsx watch src/index.ts",
     "build": "npm run db:generate && tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "start:railway": "npm run build --workspace @prooftrader/shared && npm run build && node dist/index.js",
     "db:generate": "prisma generate --config ../../prisma.config.ts",
     "db:push": "prisma db push --config ../../prisma.config.ts",
     "db:migrate": "prisma migrate dev --config ../../prisma.config.ts --name init",
