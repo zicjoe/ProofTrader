@@ -82,6 +82,25 @@ type StrategyObservation = {
   atrPercent?: number;
 };
 
+type IntradayExecutionSetup = {
+  valid: boolean;
+  timeframe: "1m" | "3m" | null;
+  entryPrice: number | null;
+  fvgTop: number | null;
+  fvgBottom: number | null;
+  mssLevel: number | null;
+  manipulationExtreme: number | null;
+  volumeRatio: number;
+  displacementStrength: number;
+  dailyOpenSweep: boolean;
+  asianSweep: boolean;
+  orderBlockTap: boolean;
+  takeProfitOne: number | null;
+  takeProfitTwo: number | null;
+  invalidated: boolean;
+  summary: string;
+};
+
 type MarketContext = {
   symbol: string;
   price: number;
@@ -89,6 +108,7 @@ type MarketContext = {
   atr15mPercent: number;
   atr1hPercent: number;
   trend15mPercent: number;
+  trend30mPercent: number;
   trend1hPercent: number;
   momentum5mPercent: number;
   mediumMomentumPercent: number;
@@ -113,8 +133,25 @@ type MarketContext = {
   fairValueGapPercent: number;
   crtBias: DirectionalBias;
   crtRangeMidpoint: number;
+  dailyOpen: number;
+  asianSessionHigh: number | null;
+  asianSessionLow: number | null;
+  asianSessionReady: boolean;
+  dailyRangeHigh: number;
+  dailyRangeLow: number;
+  dailyRangeMidpoint: number;
+  htfDrawPrice: number | null;
+  htfDrawLabel: string;
+  htfOrderBlockHigh: number | null;
+  htfOrderBlockLow: number | null;
+  htfOrderBlockTouched: boolean;
+  bullishSetup: IntradayExecutionSetup;
+  bearishSetup: IntradayExecutionSetup;
+  candles1m: OhlcCandle[];
+  candles3m: OhlcCandle[];
   candles5m: OhlcCandle[];
   candles15m: OhlcCandle[];
+  candles30m: OhlcCandle[];
   candles1h: OhlcCandle[];
 };
 
@@ -1154,6 +1191,361 @@ function detectCrtBias(candles: OhlcCandle[]): { bias: DirectionalBias; midpoint
   return { bias: "NEUTRAL", midpoint };
 }
 
+function emptyIntradaySetup(): IntradayExecutionSetup {
+  return {
+    valid: false,
+    timeframe: null,
+    entryPrice: null,
+    fvgTop: null,
+    fvgBottom: null,
+    mssLevel: null,
+    manipulationExtreme: null,
+    volumeRatio: 0,
+    displacementStrength: 0,
+    dailyOpenSweep: false,
+    asianSweep: false,
+    orderBlockTap: false,
+    takeProfitOne: null,
+    takeProfitTwo: null,
+    invalidated: false,
+    summary: "No valid execution setup."
+  };
+}
+
+function candlesForCurrentUtcDay(candles: OhlcCandle[]) {
+  if (candles.length === 0) return [] as OhlcCandle[];
+  const last = candles[candles.length - 1];
+  const anchor = new Date(last.time);
+  const year = anchor.getUTCFullYear();
+  const month = anchor.getUTCMonth();
+  const day = anchor.getUTCDate();
+  return candles.filter((candle) => {
+    const date = new Date(candle.time);
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day;
+  });
+}
+
+function deriveDailyOpen(candles: OhlcCandle[], fallbackPrice: number) {
+  const dayCandles = candlesForCurrentUtcDay(candles);
+  return dayCandles[0]?.open ?? candles[candles.length - 1]?.open ?? fallbackPrice;
+}
+
+function deriveSessionRange(candles: OhlcCandle[], startHourUtc: number, endHourUtcExclusive: number) {
+  const dayCandles = candlesForCurrentUtcDay(candles).filter((candle) => {
+    const hour = new Date(candle.time).getUTCHours();
+    return hour >= startHourUtc && hour < endHourUtcExclusive;
+  });
+
+  if (dayCandles.length === 0) {
+    return { ready: false, high: null as number | null, low: null as number | null };
+  }
+
+  return {
+    ready: true,
+    high: Math.max(...dayCandles.map((candle) => candle.high)),
+    low: Math.min(...dayCandles.map((candle) => candle.low))
+  };
+}
+
+function findEqualLiquidityTarget(candles: OhlcCandle[], side: "LONG" | "SHORT", currentPrice: number) {
+  const tolerance = 0.0012;
+  const window = lastN(candles, Math.min(24, candles.length));
+  let selected: number | null = null;
+
+  for (let i = window.length - 2; i >= 2; i -= 1) {
+    for (let j = i - 2; j >= Math.max(i - 8, 0); j -= 1) {
+      const left = side === "LONG" ? window[i].high : window[i].low;
+      const right = side === "LONG" ? window[j].high : window[j].low;
+      const baseline = Math.max((left + right) / 2, 0.0001);
+      if (Math.abs(left - right) / baseline > tolerance) {
+        continue;
+      }
+
+      const level = (left + right) / 2;
+      if (side === "LONG" && level > currentPrice) {
+        if (selected == null || level < selected) {
+          selected = level;
+        }
+      }
+      if (side === "SHORT" && level < currentPrice) {
+        if (selected == null || level > selected) {
+          selected = level;
+        }
+      }
+    }
+  }
+
+  return selected;
+}
+
+function findUnmitigatedFvgTarget(candles: OhlcCandle[], side: "LONG" | "SHORT", currentPrice: number) {
+  let selected: number | null = null;
+
+  for (let i = Math.max(candles.length - 22, 2); i < candles.length; i += 1) {
+    const left = candles[i - 2];
+    const right = candles[i];
+    const remainder = candles.slice(i + 1);
+
+    if (side === "LONG" && right.low > left.high) {
+      const gapLow = left.high;
+      const gapHigh = right.low;
+      const midpoint = (gapLow + gapHigh) / 2;
+      const mitigated = remainder.some((candle) => candle.low <= gapLow);
+      if (!mitigated && midpoint > currentPrice && (selected == null || midpoint < selected)) {
+        selected = midpoint;
+      }
+    }
+
+    if (side === "SHORT" && right.high < left.low) {
+      const gapHigh = left.low;
+      const gapLow = right.high;
+      const midpoint = (gapLow + gapHigh) / 2;
+      const mitigated = remainder.some((candle) => candle.high >= gapHigh);
+      if (!mitigated && midpoint < currentPrice && (selected == null || midpoint > selected)) {
+        selected = midpoint;
+      }
+    }
+  }
+
+  return selected;
+}
+
+function findRecentOrderBlock(candles: OhlcCandle[], bias: DirectionalBias) {
+  if (candles.length < 8 || bias === "NEUTRAL") {
+    return { high: null as number | null, low: null as number | null, bosLevel: null as number | null };
+  }
+
+  for (let i = candles.length - 2; i >= 6; i -= 1) {
+    const lookback = candles.slice(Math.max(0, i - 6), i);
+    if (bias === "BULLISH") {
+      const priorHigh = Math.max(...lookback.map((candle) => candle.high));
+      if (candles[i].close > priorHigh) {
+        for (let j = i - 1; j >= Math.max(i - 4, 0); j -= 1) {
+          if (candles[j].close < candles[j].open) {
+            return { high: candles[j].high, low: candles[j].low, bosLevel: candles[i].close };
+          }
+        }
+      }
+    }
+
+    if (bias === "BEARISH") {
+      const priorLow = Math.min(...lookback.map((candle) => candle.low));
+      if (candles[i].close < priorLow) {
+        for (let j = i - 1; j >= Math.max(i - 4, 0); j -= 1) {
+          if (candles[j].close > candles[j].open) {
+            return { high: candles[j].high, low: candles[j].low, bosLevel: candles[i].close };
+          }
+        }
+      }
+    }
+  }
+
+  return { high: null as number | null, low: null as number | null, bosLevel: null as number | null };
+}
+
+function deriveStructuralBiasModel(candles15m: OhlcCandle[], candles30m: OhlcCandle[], currentPrice: number, trend15mPercent: number, trend30mPercent: number) {
+  const latest15 = candles15m[candles15m.length - 1];
+  const average15 = average(lastN(closeSeries(candles15m), Math.min(10, candles15m.length)));
+  const bullishOrderBlock = findRecentOrderBlock(candles15m, "BULLISH");
+  const bearishOrderBlock = findRecentOrderBlock(candles15m, "BEARISH");
+  const bullishEqualHighs = findEqualLiquidityTarget(candles15m, "LONG", currentPrice);
+  const bearishEqualLows = findEqualLiquidityTarget(candles15m, "SHORT", currentPrice);
+  const bullishFvgTarget = findUnmitigatedFvgTarget(candles15m, "LONG", currentPrice);
+  const bearishFvgTarget = findUnmitigatedFvgTarget(candles15m, "SHORT", currentPrice);
+  const bullishDraw = bullishEqualHighs ?? bullishFvgTarget;
+  const bearishDraw = bearishEqualLows ?? bearishFvgTarget;
+  const bullishDrawLabel = bullishEqualHighs != null ? "Equal Highs" : bullishFvgTarget != null ? "Unmitigated M15 FVG" : "None";
+  const bearishDrawLabel = bearishEqualLows != null ? "Equal Lows" : bearishFvgTarget != null ? "Unmitigated M15 FVG" : "None";
+  const bullishScore =
+    (trend30mPercent > 0.04 ? 1.2 : 0) +
+    (trend15mPercent > -0.02 ? 1 : 0) +
+    (latest15.close > average15 ? 0.8 : 0) +
+    (bullishOrderBlock.low != null ? 1 : 0) +
+    (bullishDraw != null ? 0.8 : 0);
+  const bearishScore =
+    (trend30mPercent < -0.04 ? 1.2 : 0) +
+    (trend15mPercent < 0.02 ? 1 : 0) +
+    (latest15.close < average15 ? 0.8 : 0) +
+    (bearishOrderBlock.low != null ? 1 : 0) +
+    (bearishDraw != null ? 0.8 : 0);
+
+  if (bullishScore >= 3.2 && bullishScore > bearishScore) {
+    return {
+      bias: "BULLISH" as DirectionalBias,
+      drawPrice: bullishDraw,
+      drawLabel: bullishDrawLabel,
+      orderBlockHigh: bullishOrderBlock.high,
+      orderBlockLow: bullishOrderBlock.low,
+      invalidated: bullishOrderBlock.low != null ? latest15.close < bullishOrderBlock.low : false
+    };
+  }
+
+  if (bearishScore >= 3.2 && bearishScore > bullishScore) {
+    return {
+      bias: "BEARISH" as DirectionalBias,
+      drawPrice: bearishDraw,
+      drawLabel: bearishDrawLabel,
+      orderBlockHigh: bearishOrderBlock.high,
+      orderBlockLow: bearishOrderBlock.low,
+      invalidated: bearishOrderBlock.high != null ? latest15.close > bearishOrderBlock.high : false
+    };
+  }
+
+  return {
+    bias: "NEUTRAL" as DirectionalBias,
+    drawPrice: null,
+    drawLabel: "None",
+    orderBlockHigh: null,
+    orderBlockLow: null,
+    invalidated: false
+  };
+}
+
+function detectIntradayExecutionSetup(params: {
+  side: "LONG" | "SHORT";
+  currentPrice: number;
+  dailyOpen: number;
+  asianSessionHigh: number | null;
+  asianSessionLow: number | null;
+  orderBlockHigh: number | null;
+  orderBlockLow: number | null;
+  drawTargetPrice: number | null;
+  dailyRangeMidpoint: number;
+  atrPercent: number;
+  candles1m: OhlcCandle[];
+  candles3m: OhlcCandle[];
+}) {
+  const {
+    side,
+    currentPrice,
+    dailyOpen,
+    asianSessionHigh,
+    asianSessionLow,
+    orderBlockHigh,
+    orderBlockLow,
+    drawTargetPrice,
+    dailyRangeMidpoint,
+    atrPercent,
+    candles1m,
+    candles3m
+  } = params;
+
+  const assess = (candles: OhlcCandle[], timeframe: "1m" | "3m") => {
+    if (candles.length < 24) {
+      return emptyIntradaySetup();
+    }
+
+    const recent = lastN(candlesForCurrentUtcDay(candles), Math.min(48, candlesForCurrentUtcDay(candles).length || candles.length));
+    if (recent.length < 24) {
+      return emptyIntradaySetup();
+    }
+
+    const minGapPercent = Math.max(atrPercent * 0.18, 0.08);
+    const entryTolerancePercent = Math.max(atrPercent * 0.35, 0.2);
+
+    for (let i = Math.max(6, recent.length - 18); i < recent.length - 2; i += 1) {
+      const candle = recent[i];
+      const orderBlockTap = orderBlockHigh != null && orderBlockLow != null
+        ? candle.low <= orderBlockHigh && candle.high >= orderBlockLow
+        : false;
+      const dailyOpenSweep = side === "LONG"
+        ? candle.low < dailyOpen
+        : candle.high > dailyOpen;
+      const asianSweep = side === "LONG"
+        ? asianSessionLow != null && candle.low <= asianSessionLow * 1.0008
+        : asianSessionHigh != null && candle.high >= asianSessionHigh * 0.9992;
+
+      if (!dailyOpenSweep || (!asianSweep && !orderBlockTap && (asianSessionLow != null || asianSessionHigh != null))) {
+        continue;
+      }
+
+      const manipulationExtreme = side === "LONG" ? candle.low : candle.high;
+
+      for (let j = i + 1; j < Math.min(i + 7, recent.length); j += 1) {
+        const displacement = recent[j];
+        const body = Math.abs(displacement.close - displacement.open);
+        const trailing = recent.slice(Math.max(0, j - 10), j);
+        const averageBody = Math.max(average(trailing.map((item) => Math.abs(item.close - item.open))), currentPrice * 0.0006, 0.0001);
+        const trailingVolume = Math.max(average(trailing.map((item) => item.volume)), 0.0001);
+        const volumeRatio = displacement.volume / trailingVolume;
+        const refSlice = recent.slice(Math.max(i, j - 5), j);
+        const refHigh = Math.max(...refSlice.map((item) => item.high));
+        const refLow = Math.min(...refSlice.map((item) => item.low));
+        const displacementStrength = clamp(body / averageBody - 1, 0, 2);
+
+        const bullishMss = side === "LONG" && displacement.close > refHigh && displacement.close > displacement.open;
+        const bearishMss = side === "SHORT" && displacement.close < refLow && displacement.close < displacement.open;
+        if ((!bullishMss && !bearishMss) || body < averageBody * 1.35 || volumeRatio < 1.5) {
+          continue;
+        }
+
+        if (side === "LONG" && j >= 2 && recent[j].low > recent[j - 2].high) {
+          const fvgBottom = recent[j - 2].high;
+          const fvgTop = recent[j].low;
+          const gapPercent = ((fvgTop - fvgBottom) / Math.max(currentPrice, 0.0001)) * 100;
+          const nearEntry = currentPrice >= fvgBottom && currentPrice <= fvgTop * 1.0015 || Math.abs(currentPrice - fvgTop) / currentPrice * 100 <= entryTolerancePercent;
+          if (gapPercent >= minGapPercent && nearEntry) {
+            const takeProfitOne = dailyRangeMidpoint > currentPrice ? dailyRangeMidpoint : currentPrice + (currentPrice - manipulationExtreme) * 1.4;
+            const takeProfitTwo = drawTargetPrice != null && drawTargetPrice > currentPrice ? drawTargetPrice : currentPrice + (currentPrice - manipulationExtreme) * 2.4;
+            return {
+              valid: true,
+              timeframe,
+              entryPrice: round(fvgTop, 2),
+              fvgTop: round(fvgTop, 2),
+              fvgBottom: round(fvgBottom, 2),
+              mssLevel: round(refHigh, 2),
+              manipulationExtreme: round(manipulationExtreme, 2),
+              volumeRatio: round(volumeRatio, 2),
+              displacementStrength: round(displacementStrength, 2),
+              dailyOpenSweep,
+              asianSweep,
+              orderBlockTap,
+              takeProfitOne: round(takeProfitOne, 2),
+              takeProfitTwo: round(takeProfitTwo, 2),
+              invalidated: orderBlockLow != null ? recent[recent.length - 1].close < orderBlockLow : false,
+              summary: `${timeframe} bullish MSS displaced through ${refHigh.toFixed(2)} and printed a valid FVG after the daily-open raid.`
+            } satisfies IntradayExecutionSetup;
+          }
+        }
+
+        if (side === "SHORT" && j >= 2 && recent[j].high < recent[j - 2].low) {
+          const fvgTop = recent[j - 2].low;
+          const fvgBottom = recent[j].high;
+          const gapPercent = ((fvgTop - fvgBottom) / Math.max(currentPrice, 0.0001)) * 100;
+          const nearEntry = currentPrice <= fvgTop && currentPrice >= fvgBottom * 0.9985 || Math.abs(currentPrice - fvgBottom) / currentPrice * 100 <= entryTolerancePercent;
+          if (gapPercent >= minGapPercent && nearEntry) {
+            const takeProfitOne = dailyRangeMidpoint < currentPrice ? dailyRangeMidpoint : currentPrice - (manipulationExtreme - currentPrice) * 1.4;
+            const takeProfitTwo = drawTargetPrice != null && drawTargetPrice < currentPrice ? drawTargetPrice : currentPrice - (manipulationExtreme - currentPrice) * 2.4;
+            return {
+              valid: true,
+              timeframe,
+              entryPrice: round(fvgBottom, 2),
+              fvgTop: round(fvgTop, 2),
+              fvgBottom: round(fvgBottom, 2),
+              mssLevel: round(refLow, 2),
+              manipulationExtreme: round(manipulationExtreme, 2),
+              volumeRatio: round(volumeRatio, 2),
+              displacementStrength: round(displacementStrength, 2),
+              dailyOpenSweep,
+              asianSweep,
+              orderBlockTap,
+              takeProfitOne: round(takeProfitOne, 2),
+              takeProfitTwo: round(takeProfitTwo, 2),
+              invalidated: orderBlockHigh != null ? recent[recent.length - 1].close > orderBlockHigh : false,
+              summary: `${timeframe} bearish MSS displaced through ${refLow.toFixed(2)} and printed a valid FVG after the daily-open raid.`
+            } satisfies IntradayExecutionSetup;
+          }
+        }
+      }
+    }
+
+    return emptyIntradaySetup();
+  };
+
+  const primary = assess(candles3m, "3m");
+  return primary.valid ? primary : assess(candles1m, "1m");
+}
+
 type StructuralExecutionLevels = {
   stopLoss: number | null;
   takeProfit: number | null;
@@ -1421,7 +1813,7 @@ function createInitialSnapshot(): ProofTraderSnapshot {
   snapshot.positions = [];
   snapshot.strategy = {
     ...snapshot.strategy,
-    selectedStrategy: "AI SMC / CRT Execution Strategist",
+    selectedStrategy: "AI Crypto SMC / CRT Intraday Execution",
     currentMode: "AI Awaiting Candidates",
     marketRegime: "AI Warmup",
     readiness: "Awaiting AI market features",
@@ -1433,8 +1825,8 @@ function createInitialSnapshot(): ProofTraderSnapshot {
     aiCommentary: [],
     allowedSymbols: [...snapshot.risk.policy.whitelistedMarkets],
     entryRules: [
-      "AI ranks only bounded candidates from SMC liquidity sweep, SMC fair value gap continuation, and CRT range raid modules.",
-      "The feature engine reads higher-timeframe structure, liquidity sweeps, displacement, fair value gaps, CRT range raids, ATR, and order-book execution quality before a candidate is born.",
+      "AI ranks only bounded candidates from higher-timeframe crypto SMC / CRT setups built around daily-open manipulation, Asian-range sweeps, MSS displacement, and FVG execution zones.",
+      "The feature engine reads M15 / M30 structure bias, daily open, Asian session range, M15 order blocks, M1 / M3 MSS displacement, volume expansion, FVG quality, and order-book execution quality before a candidate is born.",
       "Every candidate must clear the hard confidence threshold and professional execution filters for spread, depth, and correlated exposure.",
       "Only one open position per watched symbol is allowed and same-side correlated stacking is capped."
     ],
@@ -1901,7 +2293,7 @@ class StateStore {
       positionExitEngine: snapshot.strategy.ai?.positionExitEngine ?? null,
       portfolioAllocation: snapshot.strategy.ai?.portfolioAllocation ?? null
     };
-    snapshot.strategy.selectedStrategy = "AI SMC / CRT Execution Strategist";
+    snapshot.strategy.selectedStrategy = "AI Crypto SMC / CRT Intraday Execution";
   }
 
   private rememberPrice(symbol: string, price: number) {
@@ -1910,11 +2302,22 @@ class StateStore {
     return history;
   }
 
-  private buildMarketContext(symbol: string, price: number, candles5m: OhlcCandle[], candles15m: OhlcCandle[], candles1h: OhlcCandle[], depth: DepthMetrics): MarketContext {
+  private buildMarketContext(
+    symbol: string,
+    price: number,
+    candles1m: OhlcCandle[],
+    candles3m: OhlcCandle[],
+    candles5m: OhlcCandle[],
+    candles15m: OhlcCandle[],
+    candles30m: OhlcCandle[],
+    candles1h: OhlcCandle[],
+    depth: DepthMetrics
+  ): MarketContext {
     const atr5mPercent = round(computeAtrPercent(candles5m), 3);
     const atr15mPercent = round(computeAtrPercent(candles15m), 3);
     const atr1hPercent = round(computeAtrPercent(candles1h), 3);
     const trend15mPercent = round(computeTrendPercent(candles15m, 5, 14), 3);
+    const trend30mPercent = round(computeTrendPercent(candles30m, 5, 14), 3);
     const trend1hPercent = round(computeTrendPercent(candles1h, 6, 20), 3);
     const momentum5mPercent = round(computeMomentumPercent(candles5m, 3), 3);
     const mediumMomentumPercent = round(computeMomentumPercent(candles15m, 3), 3);
@@ -1923,11 +2326,50 @@ class StateStore {
     const rangePosition15m = round(computeRangePositionFromCandles(candles15m), 3);
     const breakoutPressure = round(computeBreakoutPressure(candles5m, rangePosition5m), 3);
     const meanReversionStretch = round(computeStretchScore(candles5m), 3);
-    const structureBias = inferStructureBias(trend1hPercent, trend15mPercent);
     const sweep = detectLiquiditySweep(candles5m);
-    const displacement = detectDisplacement(candles5m);
-    const fairValueGap = detectFairValueGap(candles5m);
+    const displacement = detectDisplacement(candles3m.length >= 6 ? candles3m : candles5m);
+    const fairValueGap = detectFairValueGap(candles3m.length >= 3 ? candles3m : candles5m);
     const crt = detectCrtBias(candles1h);
+    const dailyOpen = round(deriveDailyOpen(candles15m, price), 3);
+    const asianRange = deriveSessionRange(candles15m, 0, 7);
+    const dayCandles = candlesForCurrentUtcDay(candles15m);
+    const dailyRangeHigh = round(dayCandles.length ? Math.max(...dayCandles.map((candle) => candle.high)) : candles15m[candles15m.length - 1]?.high ?? price, 3);
+    const dailyRangeLow = round(dayCandles.length ? Math.min(...dayCandles.map((candle) => candle.low)) : candles15m[candles15m.length - 1]?.low ?? price, 3);
+    const dailyRangeMidpoint = round((dailyRangeHigh + dailyRangeLow) / 2, 3);
+    const structuralModel = deriveStructuralBiasModel(candles15m, candles30m, price, trend15mPercent, trend30mPercent);
+    const htfOrderBlockTouched = structuralModel.orderBlockHigh != null && structuralModel.orderBlockLow != null
+      ? price >= structuralModel.orderBlockLow && price <= structuralModel.orderBlockHigh
+      : false;
+
+    const bullishSetup = detectIntradayExecutionSetup({
+      side: "LONG",
+      currentPrice: price,
+      dailyOpen,
+      asianSessionHigh: asianRange.high,
+      asianSessionLow: asianRange.low,
+      orderBlockHigh: structuralModel.orderBlockHigh,
+      orderBlockLow: structuralModel.orderBlockLow,
+      drawTargetPrice: structuralModel.drawPrice,
+      dailyRangeMidpoint,
+      atrPercent: atr15mPercent,
+      candles1m,
+      candles3m
+    });
+
+    const bearishSetup = detectIntradayExecutionSetup({
+      side: "SHORT",
+      currentPrice: price,
+      dailyOpen,
+      asianSessionHigh: asianRange.high,
+      asianSessionLow: asianRange.low,
+      orderBlockHigh: structuralModel.orderBlockHigh,
+      orderBlockLow: structuralModel.orderBlockLow,
+      drawTargetPrice: structuralModel.drawPrice,
+      dailyRangeMidpoint,
+      atrPercent: atr15mPercent,
+      candles1m,
+      candles3m
+    });
 
     const context: MarketContext = {
       symbol,
@@ -1936,6 +2378,7 @@ class StateStore {
       atr15mPercent,
       atr1hPercent,
       trend15mPercent,
+      trend30mPercent,
       trend1hPercent,
       momentum5mPercent,
       mediumMomentumPercent,
@@ -1951,7 +2394,7 @@ class StateStore {
       spreadBps: round(depth.spreadBps, 2),
       bookImbalance: round(depth.imbalance, 3),
       topLevelLiquidityUsd: round(depth.topLevelLiquidityUsd, 2),
-      structureBias,
+      structureBias: structuralModel.invalidated ? "NEUTRAL" : structuralModel.bias,
       sweepSignal: sweep.signal,
       sweepStrength: round(sweep.strength, 3),
       displacementBias: displacement.bias,
@@ -1960,8 +2403,25 @@ class StateStore {
       fairValueGapPercent: round(fairValueGap.gapPercent, 3),
       crtBias: crt.bias,
       crtRangeMidpoint: round(crt.midpoint, 3),
+      dailyOpen,
+      asianSessionHigh: asianRange.high != null ? round(asianRange.high, 3) : null,
+      asianSessionLow: asianRange.low != null ? round(asianRange.low, 3) : null,
+      asianSessionReady: asianRange.ready,
+      dailyRangeHigh,
+      dailyRangeLow,
+      dailyRangeMidpoint,
+      htfDrawPrice: structuralModel.drawPrice != null ? round(structuralModel.drawPrice, 3) : null,
+      htfDrawLabel: structuralModel.drawLabel,
+      htfOrderBlockHigh: structuralModel.orderBlockHigh != null ? round(structuralModel.orderBlockHigh, 3) : null,
+      htfOrderBlockLow: structuralModel.orderBlockLow != null ? round(structuralModel.orderBlockLow, 3) : null,
+      htfOrderBlockTouched,
+      bullishSetup,
+      bearishSetup,
+      candles1m,
+      candles3m,
       candles5m,
       candles15m,
+      candles30m,
       candles1h
     };
 
@@ -1987,9 +2447,9 @@ class StateStore {
         spreadPercent: round(candidate.spreadPercent, 4),
         volatilityPercent: round(candidate.volatilityPercent, 3),
         rangePosition: round(candidate.rangePosition, 3),
-        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, 2.2), 2),
-        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, 4.5), 2),
-        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.55, 1.25), 2),
+        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.35, 4.5), 2),
+        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 0.8, 7.5), 2),
+        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.45, 1.1), 2),
         atrPercent: round(candidate.atrPercent, 3),
         trend1hPercent: round(candidate.trend1hPercent, 3),
         trend15mPercent: round(candidate.trend15mPercent, 3),
@@ -2000,31 +2460,29 @@ class StateStore {
       });
     };
 
-    const bullishStructure = context.structureBias === "BULLISH" || (context.crtBias === "BULLISH" && context.trend15mPercent > -0.05);
-    const bearishStructure = context.structureBias === "BEARISH" || (context.crtBias === "BEARISH" && context.trend15mPercent < 0.05);
-    const bullishSweep = context.sweepSignal === "SELL_SIDE_SWEEP" && context.displacementBias === "BULLISH";
-    const bearishSweep = context.sweepSignal === "BUY_SIDE_SWEEP" && context.displacementBias === "BEARISH";
-    const bullishGapContinuation = bullishStructure && context.fairValueGapBias === "BULLISH" && context.displacementBias === "BULLISH" && context.rangePosition5m >= 0.32;
-    const bearishGapContinuation = bearishStructure && context.fairValueGapBias === "BEARISH" && context.displacementBias === "BEARISH" && context.rangePosition5m <= 0.68;
+    const bullishStructure = context.structureBias === "BULLISH";
+    const bearishStructure = context.structureBias === "BEARISH";
 
-    if (bullishSweep && bullishStructure && context.executionQuality >= 0.5) {
-      const confidence = 0.58 + context.sweepStrength * 0.12 + context.displacementStrength * 0.12 + Math.max(context.trend1hPercent, 0) * 0.14 + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(atrPercent * 1.0, 0.68), 0.68, 1.85);
+    if (bullishStructure && context.bullishSetup.valid && !context.bullishSetup.invalidated && context.executionQuality >= 0.5 && context.bookImbalance > -0.28) {
+      const stopLossPercent = Math.max(((context.price - (context.bullishSetup.manipulationExtreme ?? context.price * 0.995)) / context.price) * 100 + 0.1, 0.45);
+      const takeProfitTwo = context.bullishSetup.takeProfitTwo ?? (context.htfDrawPrice ?? context.dailyRangeMidpoint);
+      const takeProfitPercent = Math.max(((takeProfitTwo - context.price) / context.price) * 100, stopLossPercent * 1.8, 1.1);
+      const confidence = 0.6 + Math.max(context.trend30mPercent, 0) * 0.12 + Math.max(context.trend15mPercent, 0) * 0.08 + Math.min(context.bullishSetup.volumeRatio / 2, 1) * 0.08 + context.bullishSetup.displacementStrength * 0.08 + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
       addCandidate({
         action: "LONG",
         confidence,
-        type: "SMC_SWEEP_RECLAIM",
-        module: "SMC Liquidity Sweep",
+        type: "SMC_CRT_DAILY_OPEN_RAID",
+        module: "Crypto SMC / CRT Long",
         regime: context.regime,
-        summary: `SMC bullish sweep reclaim. 5m price raided sell-side liquidity, displaced higher, and reclaimed the range with ${(context.executionQuality * 100).toFixed(0)}% execution quality.`,
+        summary: `Bullish daily-open manipulation confirmed. ${context.bullishSetup.summary} Entry is sitting near the ${context.bullishSetup.timeframe} FVG with draw toward ${context.htfDrawLabel.toLowerCase()}.`,
         momentumPercent: context.momentum5mPercent,
         mediumMomentumPercent: context.mediumMomentumPercent,
         spreadPercent: context.spreadPercent,
         volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition5m,
+        rangePosition: context.rangePosition15m,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.3,
-        sizeMultiplier: 0.92 + context.executionQuality * 0.16,
+        takeProfitPercent,
+        sizeMultiplier: 0.8 + Math.min(context.bullishSetup.volumeRatio / 3, 0.12) + context.executionQuality * 0.08,
         expectedHoldMinutes: 180,
         atrPercent,
         trend1hPercent: context.trend1hPercent,
@@ -2036,141 +2494,27 @@ class StateStore {
       });
     }
 
-    if (bearishSweep && bearishStructure && context.executionQuality >= 0.5) {
-      const confidence = 0.58 + context.sweepStrength * 0.12 + context.displacementStrength * 0.12 + Math.abs(Math.min(context.trend1hPercent, 0)) * 0.14 + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(atrPercent * 1.0, 0.68), 0.68, 1.85);
+    if (bearishStructure && context.bearishSetup.valid && !context.bearishSetup.invalidated && context.executionQuality >= 0.5 && context.bookImbalance < 0.28) {
+      const stopLossPercent = Math.max((((context.bearishSetup.manipulationExtreme ?? context.price * 1.005) - context.price) / context.price) * 100 + 0.1, 0.45);
+      const takeProfitTwo = context.bearishSetup.takeProfitTwo ?? (context.htfDrawPrice ?? context.dailyRangeMidpoint);
+      const takeProfitPercent = Math.max(((context.price - takeProfitTwo) / context.price) * 100, stopLossPercent * 1.8, 1.1);
+      const confidence = 0.6 + Math.abs(Math.min(context.trend30mPercent, 0)) * 0.12 + Math.abs(Math.min(context.trend15mPercent, 0)) * 0.08 + Math.min(context.bearishSetup.volumeRatio / 2, 1) * 0.08 + context.bearishSetup.displacementStrength * 0.08 + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
       addCandidate({
         action: "SHORT",
         confidence,
-        type: "SMC_SWEEP_RECLAIM",
-        module: "SMC Liquidity Sweep",
+        type: "SMC_CRT_DAILY_OPEN_RAID",
+        module: "Crypto SMC / CRT Short",
         regime: context.regime,
-        summary: `SMC bearish sweep reclaim. 5m price raided buy-side liquidity, displaced lower, and rejected the range with ${(context.executionQuality * 100).toFixed(0)}% execution quality.`,
+        summary: `Bearish daily-open manipulation confirmed. ${context.bearishSetup.summary} Entry is sitting near the ${context.bearishSetup.timeframe} FVG with draw toward ${context.htfDrawLabel.toLowerCase()}.`,
         momentumPercent: context.momentum5mPercent,
         mediumMomentumPercent: context.mediumMomentumPercent,
         spreadPercent: context.spreadPercent,
         volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition5m,
+        rangePosition: context.rangePosition15m,
         stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.3,
-        sizeMultiplier: 0.92 + context.executionQuality * 0.16,
+        takeProfitPercent,
+        sizeMultiplier: 0.8 + Math.min(context.bearishSetup.volumeRatio / 3, 0.12) + context.executionQuality * 0.08,
         expectedHoldMinutes: 180,
-        atrPercent,
-        trend1hPercent: context.trend1hPercent,
-        trend15mPercent: context.trend15mPercent,
-        spreadBps: context.spreadBps,
-        bookImbalance: context.bookImbalance,
-        liquidityUsd: context.liquidityUsd,
-        executionQuality: context.executionQuality
-      });
-    }
-
-    if (bullishGapContinuation && context.executionQuality >= 0.54 && context.bookImbalance > -0.18) {
-      const confidence = 0.57 + context.displacementStrength * 0.12 + Math.min(context.fairValueGapPercent / 0.35, 1) * 0.08 + Math.max(context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.13 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(context.atr5mPercent * 0.95, 0.62), 0.62, 1.6);
-      addCandidate({
-        action: "LONG",
-        confidence,
-        type: "SMC_FVG_CONTINUATION",
-        module: "SMC Fair Value Gap",
-        regime: context.regime,
-        summary: `SMC bullish fair value gap continuation. Structure stayed bid after bullish displacement and the gap remains active for continuation.`,
-        momentumPercent: context.momentum5mPercent,
-        mediumMomentumPercent: context.mediumMomentumPercent,
-        spreadPercent: context.spreadPercent,
-        volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition5m,
-        stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.45,
-        sizeMultiplier: 0.96 + context.executionQuality * 0.14,
-        expectedHoldMinutes: 150,
-        atrPercent,
-        trend1hPercent: context.trend1hPercent,
-        trend15mPercent: context.trend15mPercent,
-        spreadBps: context.spreadBps,
-        bookImbalance: context.bookImbalance,
-        liquidityUsd: context.liquidityUsd,
-        executionQuality: context.executionQuality
-      });
-    }
-
-    if (bearishGapContinuation && context.executionQuality >= 0.54 && context.bookImbalance < 0.18) {
-      const confidence = 0.57 + context.displacementStrength * 0.12 + Math.min(context.fairValueGapPercent / 0.35, 1) * 0.08 + Math.abs(Math.min(context.trend15mPercent, 0)) * 0.18 + context.executionQuality * 0.13 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(context.atr5mPercent * 0.95, 0.62), 0.62, 1.6);
-      addCandidate({
-        action: "SHORT",
-        confidence,
-        type: "SMC_FVG_CONTINUATION",
-        module: "SMC Fair Value Gap",
-        regime: context.regime,
-        summary: `SMC bearish fair value gap continuation. Structure stayed offered after bearish displacement and the gap remains active for continuation.`,
-        momentumPercent: context.momentum5mPercent,
-        mediumMomentumPercent: context.mediumMomentumPercent,
-        spreadPercent: context.spreadPercent,
-        volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition5m,
-        stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.45,
-        sizeMultiplier: 0.96 + context.executionQuality * 0.14,
-        expectedHoldMinutes: 150,
-        atrPercent,
-        trend1hPercent: context.trend1hPercent,
-        trend15mPercent: context.trend15mPercent,
-        spreadBps: context.spreadBps,
-        bookImbalance: context.bookImbalance,
-        liquidityUsd: context.liquidityUsd,
-        executionQuality: context.executionQuality
-      });
-    }
-
-    if (context.crtBias === "BULLISH" && context.executionQuality >= 0.48 && context.bookImbalance > -0.24) {
-      const confidence = 0.56 + Math.max(context.trend1hPercent, 0) * 0.12 + Math.max(context.trend15mPercent, -0.02) * 0.12 + context.executionQuality * 0.14 + context.breakoutPressure * 0.08 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(context.atr15mPercent, 0.72), 0.72, 1.95);
-      addCandidate({
-        action: "LONG",
-        confidence,
-        type: "CRT_RANGE_RAID",
-        module: "CRT Range Raid",
-        regime: context.regime,
-        summary: `CRT bullish range raid. The current 1h candle swept the previous range low and reclaimed above the midpoint near ${context.crtRangeMidpoint.toFixed(2)}.`,
-        momentumPercent: context.momentum5mPercent,
-        mediumMomentumPercent: context.mediumMomentumPercent,
-        spreadPercent: context.spreadPercent,
-        volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition15m,
-        stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.15,
-        sizeMultiplier: 0.88 + context.executionQuality * 0.14,
-        expectedHoldMinutes: 240,
-        atrPercent,
-        trend1hPercent: context.trend1hPercent,
-        trend15mPercent: context.trend15mPercent,
-        spreadBps: context.spreadBps,
-        bookImbalance: context.bookImbalance,
-        liquidityUsd: context.liquidityUsd,
-        executionQuality: context.executionQuality
-      });
-    }
-
-    if (context.crtBias === "BEARISH" && context.executionQuality >= 0.48 && context.bookImbalance < 0.24) {
-      const confidence = 0.56 + Math.abs(Math.min(context.trend1hPercent, 0)) * 0.12 + Math.abs(Math.min(context.trend15mPercent, 0.02)) * 0.12 + context.executionQuality * 0.14 + context.breakoutPressure * 0.08 + liquidityBoost - spreadPenalty;
-      const stopLossPercent = clamp(Math.max(context.atr15mPercent, 0.72), 0.72, 1.95);
-      addCandidate({
-        action: "SHORT",
-        confidence,
-        type: "CRT_RANGE_RAID",
-        module: "CRT Range Raid",
-        regime: context.regime,
-        summary: `CRT bearish range raid. The current 1h candle swept the previous range high and rejected back below the midpoint near ${context.crtRangeMidpoint.toFixed(2)}.`,
-        momentumPercent: context.momentum5mPercent,
-        mediumMomentumPercent: context.mediumMomentumPercent,
-        spreadPercent: context.spreadPercent,
-        volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition15m,
-        stopLossPercent,
-        takeProfitPercent: stopLossPercent * 2.15,
-        sizeMultiplier: 0.88 + context.executionQuality * 0.14,
-        expectedHoldMinutes: 240,
         atrPercent,
         trend1hPercent: context.trend1hPercent,
         trend15mPercent: context.trend15mPercent,
@@ -2200,7 +2544,7 @@ class StateStore {
           action: "HOLD",
           type: "OBSERVATION",
           confidence: round(clamp(0.52 + context.executionQuality * 0.1, 0.5, 0.72), 2),
-          summary: `No clean SMC / CRT setup. Structure ${context.structureBias.toLowerCase()}, sweep ${context.sweepSignal.toLowerCase().replaceAll("_", " ")}, CRT ${context.crtBias.toLowerCase()}, spread ${context.spreadBps.toFixed(1)} bps.`,
+          summary: `No valid crypto SMC / CRT setup. Bias ${context.structureBias.toLowerCase()}, daily open ${context.dailyOpen.toFixed(2)}, asian ready ${context.asianSessionReady ? "yes" : "no"}, bullish setup ${context.bullishSetup.valid ? "armed" : "not armed"}, bearish setup ${context.bearishSetup.valid ? "armed" : "not armed"}.`,
           regime: context.regime,
           spreadPercent: context.spreadPercent,
           momentumPercent: context.momentum5mPercent,
@@ -2211,6 +2555,7 @@ class StateStore {
 
     return { observation, candidates };
   }
+
 
   private buildStrategyCandidates(symbol: string, history: number[]): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
     const latest = history[history.length - 1] ?? 0;
@@ -2464,6 +2809,15 @@ class StateStore {
     if (Math.abs(context.bookImbalance) > 0.55 && ((candidate.action === "LONG" && context.bookImbalance < 0) || (candidate.action === "SHORT" && context.bookImbalance > 0))) {
       return `Order-book imbalance ${context.bookImbalance.toFixed(2)} is adverse to a ${candidate.action} entry.`;
     }
+    if (candidate.type === "SMC_CRT_DAILY_OPEN_RAID") {
+      const setup = candidate.action === "LONG" ? context.bullishSetup : context.bearishSetup;
+      if (!setup.valid || setup.invalidated) {
+        return "The intraday SMC / CRT setup is no longer valid at execution time.";
+      }
+      if (setup.volumeRatio < 1.5) {
+        return `Execution volume ${setup.volumeRatio.toFixed(2)}x is below the 1.5x confirmation threshold.`;
+      }
+    }
     if (orderPreview.accountMode === "futures") {
       if (orderPreview.leverage > policy.futuresMaxLeverage) {
         return `Leverage ${orderPreview.leverage}x is above the futures cap of ${policy.futuresMaxLeverage}x.`;
@@ -2492,6 +2846,7 @@ class StateStore {
       requestedLeverage?: number | null;
       candles5m?: OhlcCandle[] | null;
       candles1h?: OhlcCandle[] | null;
+      marketContext?: MarketContext | null;
     }
   ) {
     const policy = snapshot.risk.policy;
@@ -2539,6 +2894,19 @@ class StateStore {
       }
     }
 
+    let explicitStopLoss: number | null = null;
+    let explicitTakeProfit: number | null = null;
+    const marketContext = tuning?.marketContext ?? null;
+    if ((tuning?.signalType ?? "").startsWith("SMC_CRT_") && marketContext) {
+      const setup = side === "LONG" ? marketContext.bullishSetup : marketContext.bearishSetup;
+      if (setup.valid && setup.manipulationExtreme != null) {
+        explicitStopLoss = side === "LONG"
+          ? round(setup.manipulationExtreme * 0.999, 2)
+          : round(setup.manipulationExtreme * 1.001, 2);
+        explicitTakeProfit = round((setup.takeProfitTwo ?? setup.takeProfitOne ?? price), 2);
+      }
+    }
+
     const structuralLevels = deriveStructuralExecutionLevels({
       signalType: tuning?.signalType ?? null,
       side,
@@ -2549,7 +2917,9 @@ class StateStore {
       candles1h: tuning?.candles1h ?? null
     });
 
-    if (structuralLevels.stopDistancePercent != null) {
+    if (explicitStopLoss != null) {
+      stopDistancePercent = Math.abs(price - explicitStopLoss) / Math.max(price, 0.0001);
+    } else if (structuralLevels.stopDistancePercent != null) {
       stopDistancePercent = structuralLevels.stopDistancePercent / 100;
     }
 
@@ -2559,9 +2929,11 @@ class StateStore {
       stopDistancePercent = Math.max(stopDistancePercent, 0.005);
     }
 
-    let takeProfitPercent = clamp((tuning?.takeProfitPercent ?? Math.max(stopDistancePercent * 220, accountMode === "futures" ? 1.6 : 1.8)) / 100, Math.max(stopDistancePercent * 1.5, 0.012), 0.05);
-    if (structuralLevels.takeProfitPercent != null) {
-      takeProfitPercent = clamp(structuralLevels.takeProfitPercent / 100, Math.max(stopDistancePercent * 1.6, 0.012), 0.05);
+    let takeProfitPercent = clamp((tuning?.takeProfitPercent ?? Math.max(stopDistancePercent * 220, accountMode === "futures" ? 1.6 : 1.8)) / 100, Math.max(stopDistancePercent * 1.5, 0.012), 0.08);
+    if (explicitTakeProfit != null) {
+      takeProfitPercent = clamp(Math.abs(explicitTakeProfit - price) / Math.max(price, 0.0001), Math.max(stopDistancePercent * 1.6, 0.012), 0.08);
+    } else if (structuralLevels.takeProfitPercent != null) {
+      takeProfitPercent = clamp(structuralLevels.takeProfitPercent / 100, Math.max(stopDistancePercent * 1.6, 0.012), 0.08);
     }
 
     const notionalFromRisk = riskBudget / Math.max(stopDistancePercent, 0.001);
@@ -2574,8 +2946,8 @@ class StateStore {
     const size = round(rawSize, price >= 1000 ? 6 : 4);
     const notional = round(size * price, 2);
     const collateral = round(accountMode === "futures" ? notional / Math.max(leverage, 1) : notional, 2);
-    const stopLoss = round(price * (side === "LONG" ? 1 - stopDistancePercent : 1 + stopDistancePercent), 2);
-    const takeProfit = round(price * (side === "LONG" ? 1 + takeProfitPercent : 1 - takeProfitPercent), 2);
+    const stopLoss = explicitStopLoss != null ? explicitStopLoss : round(price * (side === "LONG" ? 1 - stopDistancePercent : 1 + stopDistancePercent), 2);
+    const takeProfit = explicitTakeProfit != null ? explicitTakeProfit : round(price * (side === "LONG" ? 1 + takeProfitPercent : 1 - takeProfitPercent), 2);
     liquidationPrice = calculateLiquidationPrice(price, side, leverage, accountMode);
     liquidationDistancePercent = calculateLiquidationDistancePercent(price, liquidationPrice);
 
@@ -2780,7 +3152,7 @@ class StateStore {
     this.ensureRunnerState(snapshot);
 
     const now = new Date().toISOString();
-    snapshot.strategy.selectedStrategy = "AI SMC / CRT Execution Strategist";
+    snapshot.strategy.selectedStrategy = "AI Crypto SMC / CRT Intraday Execution";
     snapshot.strategy.runner.lastRunAt = now;
     snapshot.strategy.runner.status = snapshot.strategy.runner.enabled ? "Running" : "Stopped";
 
@@ -3017,19 +3389,25 @@ class StateStore {
       let marketContext: MarketContext | null = null;
 
       try {
-        const [ohlc5Payload, ohlc15Payload, ohlc1hPayload, depthPayload] = await Promise.all([
+        const [ohlc1Payload, ohlc3Payload, ohlc5Payload, ohlc15Payload, ohlc30Payload, ohlc1hPayload, depthPayload] = await Promise.all([
+          krakenCliService.ohlc(symbol, 1),
+          krakenCliService.ohlc(symbol, 3),
           krakenCliService.ohlc(symbol, 5),
           krakenCliService.ohlc(symbol, 15),
+          krakenCliService.ohlc(symbol, 30),
           krakenCliService.ohlc(symbol, 60),
           krakenCliService.depth(symbol, 10)
         ]);
+        const candles1m = krakenCliService.extractOhlcRows(ohlc1Payload);
+        const candles3m = krakenCliService.extractOhlcRows(ohlc3Payload);
         const candles5m = krakenCliService.extractOhlcRows(ohlc5Payload);
         const candles15m = krakenCliService.extractOhlcRows(ohlc15Payload);
+        const candles30m = krakenCliService.extractOhlcRows(ohlc30Payload);
         const candles1h = krakenCliService.extractOhlcRows(ohlc1hPayload);
         const depthMetrics = krakenCliService.extractDepthMetrics(depthPayload);
 
-        if (candles5m.length >= 10 && candles15m.length >= 10 && candles1h.length >= 10) {
-          marketContext = this.buildMarketContext(symbol, price, candles5m, candles15m, candles1h, depthMetrics);
+        if (candles1m.length >= 24 && candles3m.length >= 24 && candles5m.length >= 10 && candles15m.length >= 14 && candles30m.length >= 14 && candles1h.length >= 10) {
+          marketContext = this.buildMarketContext(symbol, price, candles1m, candles3m, candles5m, candles15m, candles30m, candles1h, depthMetrics);
           analysis = this.filterCandidatesForAccountMode(this.buildExecutionAwareCandidates(symbol, marketContext), accountMode);
           marketContextBySymbol.set(symbol, marketContext);
         }
@@ -3088,8 +3466,13 @@ class StateStore {
         marketContext: marketContext ? {
           regime: marketContext.regime,
           trend1hPercent: marketContext.trend1hPercent,
+          trend30mPercent: marketContext.trend30mPercent,
           trend15mPercent: marketContext.trend15mPercent,
           atr15mPercent: marketContext.atr15mPercent,
+          dailyOpen: marketContext.dailyOpen,
+          asianSessionHigh: marketContext.asianSessionHigh,
+          asianSessionLow: marketContext.asianSessionLow,
+          drawPrice: marketContext.htfDrawPrice,
           spreadBps: marketContext.spreadBps,
           bookImbalance: marketContext.bookImbalance,
           liquidityUsd: marketContext.liquidityUsd,
@@ -3623,7 +4006,8 @@ class StateStore {
       volatilityPercent: topContext?.realizedVolatilityPercent ?? topContext?.atr15mPercent ?? topCandidate.volatilityPercent,
       requestedLeverage,
       candles5m: topContext?.candles5m ?? null,
-      candles1h: topContext?.candles1h ?? null
+      candles1h: topContext?.candles1h ?? null,
+      marketContext: topContext ?? null
     });
     snapshot.strategy.marketConditions = {
       ...snapshot.strategy.marketConditions,
