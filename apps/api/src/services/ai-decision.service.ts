@@ -230,13 +230,13 @@ class AiDecisionService {
             {
               role: "system",
               content:
-                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. You are allowed to select regime, module, confidence, and bounded execution tuning, but you may not invent symbols, directions, or unsafe sizing. Maximize professional risk-adjusted expectancy, not raw activity. Prefer candidates with aligned 1h and 15m trends, healthy ATR structure, narrow spreads, deep books, good execution quality, and cleaner portfolio fit. Respect portfolio concentration, bucket crowding, same-side exposure, and any futures throttle posture when accountMode is futures. Return strict JSON only."
+                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. The active model is a mean reversion plus trend filter hybrid: BTC 4H macro regime first, pair 1H regime agreement second, then 15m RSI and Bollinger confirmation with volume, volatility, wick, and execution-quality filters. Crypto trades 24/7, so never use session logic. Spot mode is long only. Futures mode may choose long or short, but you must respect any futures throttle posture, concentration limits, and hard risk controls. You may tune only bounded execution envelope values and may not invent symbols, directions, or unsafe sizing. Return strict JSON only."
             },
             {
               role: "user",
               content: JSON.stringify({
                 instructions: {
-                  objective: "Choose the single best candidate or HOLD after reviewing regime, candidate quality, open risk, trade usage, drawdown, confidence threshold, ATR structure, spread, book imbalance, liquidity depth, execution quality, account-mode attribution, and portfolio concentration. Favor the highest professional expected value after costs and slippage, and prefer candidates that do not add unnecessary pressure into already crowded buckets or one-sided books.",
+                  objective: "Choose the single best candidate or HOLD after reviewing BTC macro regime, pair regime agreement, RSI and Bollinger confirmation, ATR-based risk envelope, volume quality, wick behavior, spread, book quality, drawdown, trade usage, and portfolio concentration. Favor clean mean-reversion entries that align with the trend filter rather than raw activity or momentum chasing.",
                   mustBeAiDriven: true,
                   chooseOneCandidateOrHold: true,
                   neverInventCandidateIds: true,
@@ -245,9 +245,9 @@ class AiDecisionService {
                   confidenceThresholdIsHardGate: true,
                   futuresThrottleIsAuthoritative: true,
                   boundedTuning: {
-                    sizeMultiplier: "number between 0.6 and 1.25",
-                    stopLossPercent: "number between 0.6 and 2.0",
-                    takeProfitPercent: "number between 1.2 and 4.0"
+                    sizeMultiplier: "number between 0.55 and 1.0",
+                    stopLossPercent: "number between 0.8 and 6.5",
+                    takeProfitPercent: "number between 2.4 and 18.0"
                   },
                   responseShape: {
                     regime: "string",
@@ -259,9 +259,9 @@ class AiDecisionService {
                     confidence: "number between 0 and 1 or null",
                     strategyModule: "string|null",
                     executionBias: "string|null",
-                    sizeMultiplier: "number between 0.6 and 1.25 or null",
-                    stopLossPercent: "number between 0.6 and 2.0 or null",
-                    takeProfitPercent: "number between 1.2 and 4.0 or null",
+                    sizeMultiplier: "number between 0.55 and 1.0 or null",
+                    stopLossPercent: "number between 0.8 and 6.5 or null",
+                    takeProfitPercent: "number between 2.4 and 18.0 or null",
                     rankingSummary: "string",
                     commentary: "string",
                     rationale: "string",
@@ -294,10 +294,11 @@ class AiDecisionService {
       const thresholdGatePassed = confidence == null ? false : confidence >= input.effectiveConfidenceThreshold;
       const selectedMatchesSymbol = !selectedCandidate || !recommendedSymbol || selectedCandidate.symbol.toUpperCase() === recommendedSymbol;
       const selectedMatchesAction = !selectedCandidate || recommendedAction === selectedCandidate.action;
+      const spotDirectionAllowed = !(input.accountMode === "spot" && recommendedAction === "SHORT");
       const throttleAllowsTrade = !(input.accountMode === "futures" && input.futuresThrottle?.blockNewEntries);
-      const shouldTrade = Boolean(parsed.shouldTrade) && Boolean(selectedCandidate) && recommendedAction !== "HOLD" && thresholdGatePassed && throttleAllowsTrade;
+      const shouldTrade = Boolean(parsed.shouldTrade) && Boolean(selectedCandidate) && recommendedAction !== "HOLD" && thresholdGatePassed && throttleAllowsTrade && spotDirectionAllowed;
 
-      if (shouldTrade && (!selectedCandidate || !selectedMatchesSymbol || !selectedMatchesAction)) {
+      if (shouldTrade && (!selectedCandidate || !selectedMatchesSymbol || !selectedMatchesAction || !spotDirectionAllowed)) {
         return this.buildFallback(
           input,
           lastDecisionAt,
@@ -333,13 +334,13 @@ class AiDecisionService {
         strategyModule: shouldTrade ? (toOptionalString(parsed.strategyModule) ?? selectedCandidate?.module ?? null) : null,
         executionBias: shouldTrade ? (toOptionalString(parsed.executionBias) ?? "Balanced") : null,
         sizeMultiplier: shouldTrade
-          ? round(clamp(toOptionalNumber(parsed.sizeMultiplier) ?? selectedCandidate?.sizeMultiplier ?? 1, 0.6, 1.25), 2)
+          ? round(clamp(toOptionalNumber(parsed.sizeMultiplier) ?? selectedCandidate?.sizeMultiplier ?? 1, 0.55, 1.0), 2)
           : null,
         stopLossPercent: shouldTrade
-          ? round(clamp(toOptionalNumber(parsed.stopLossPercent) ?? selectedCandidate?.stopLossPercent ?? 1.2, 0.6, 2.0), 2)
+          ? round(clamp(toOptionalNumber(parsed.stopLossPercent) ?? selectedCandidate?.stopLossPercent ?? 1.6, 0.8, 6.5), 2)
           : null,
         takeProfitPercent: shouldTrade
-          ? round(clamp(toOptionalNumber(parsed.takeProfitPercent) ?? selectedCandidate?.takeProfitPercent ?? 2.4, 1.2, 4.0), 2)
+          ? round(clamp(toOptionalNumber(parsed.takeProfitPercent) ?? selectedCandidate?.takeProfitPercent ?? 4.8, 2.4, 18.0), 2)
           : null,
         rankingSummary: String(parsed.rankingSummary ?? this.buildRankingSummary(input.candidates.slice(0, 3)))
       };
@@ -359,7 +360,7 @@ class AiDecisionService {
   private buildFallback(input: AiDecisionInput, lastDecisionAt: string, error: string | null, commentary?: string): AiDecisionOutput {
     const topCandidate = input.heuristicsTopCandidate;
     const throttleAllowsTrade = !(input.accountMode === "futures" && input.futuresThrottle?.blockNewEntries);
-    const shouldTrade = Boolean(topCandidate && topCandidate.confidence >= input.effectiveConfidenceThreshold && throttleAllowsTrade);
+    const shouldTrade = Boolean(topCandidate && topCandidate.confidence >= input.effectiveConfidenceThreshold && throttleAllowsTrade && !(input.accountMode === "spot" && topCandidate.action === "SHORT"));
     const throttleSummary = throttleNote(input);
     return {
       enabled: this.modelEnabled,
@@ -376,16 +377,16 @@ class AiDecisionService {
       commentary:
         commentary ??
         (shouldTrade
-          ? `The deterministic strategy engine favored ${topCandidate!.symbol} ${topCandidate!.action} via ${topCandidate!.module} after reviewing ${input.candidates.length} bounded candidates.${throttleSummary ? ` ${throttleSummary}` : ""}`
-          : `The deterministic strategy engine reviewed ${input.candidates.length} bounded candidates and found no setup strong enough to trade.${throttleSummary ? ` ${throttleSummary}` : ""}`),
+          ? `The deterministic hybrid engine favored ${topCandidate!.symbol} ${topCandidate!.action} via ${topCandidate!.module} after reviewing ${input.candidates.length} bounded candidates.${throttleSummary ? ` ${throttleSummary}` : ""}`
+          : `The deterministic hybrid engine reviewed ${input.candidates.length} bounded candidates and found no trend-aligned mean reversion setup strong enough to trade.${throttleSummary ? ` ${throttleSummary}` : ""}`),
       rationale: shouldTrade
         ? `${topCandidate!.module} ranked highest with ${Math.round(topCandidate!.confidence * 100)}% confidence in a ${topCandidate!.regime} regime, ${topCandidate!.spreadBps.toFixed(1)}bps spread, ${(topCandidate!.executionQuality * 100).toFixed(0)}% execution quality, and a ${topCandidate!.bucket} bucket profile that stayed acceptable for the current portfolio.`
         : throttleAllowsTrade
-          ? `No candidate cleared the effective confidence gate of ${Math.round(input.effectiveConfidenceThreshold * 100)}%.`
+          ? `No candidate cleared the effective confidence gate of ${Math.round(input.effectiveConfidenceThreshold * 100)}% after the macro regime, volatility, and confirmation filters were applied.`
           : "Futures throttle blocked fresh entries until futures attribution stabilizes.",
       riskNote: shouldTrade
         ? `Mode trade usage: ${input.todaysExecutedTrades}/${input.effectiveMaxTradesPerDay}. Consecutive losses: ${input.consecutiveLosses}. Balance available: $${round(input.paperBalance, 2)}. Drawdown: ${round(input.currentDrawdownPercent, 2)}%.${throttleSummary ? ` ${throttleSummary}` : ""}`
-        : `The strategy engine stayed flat because the setup quality did not clear the effective threshold of ${Math.round(input.effectiveConfidenceThreshold * 100)}%.${throttleSummary ? ` ${throttleSummary}` : ""}`,
+        : `The strategy engine stayed flat because the trend filter and confirmation stack did not clear the effective threshold of ${Math.round(input.effectiveConfidenceThreshold * 100)}%.${throttleSummary ? ` ${throttleSummary}` : ""}`,
       error,
       selectedCandidateId: shouldTrade ? topCandidate!.id : null,
       strategyModule: shouldTrade ? topCandidate!.module : null,
