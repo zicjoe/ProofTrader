@@ -230,13 +230,13 @@ class AiDecisionService {
             {
               role: "system",
               content:
-                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. You are allowed to select regime, module, confidence, and bounded execution tuning, but you may not invent symbols, directions, or unsafe sizing. Maximize professional risk-adjusted expectancy, not raw activity. The active signal framework is crypto SMC / CRT intraday execution: M15 / M30 structural bias, daily-open manipulation, Asian-session sweeps, M1 / M3 market-structure shifts, displacement, and fair value gap execution. Spot mode is long only. Futures mode may trade long or short. Mean reversion is disabled. Prefer candidates with aligned higher-timeframe structure, valid daily-open raid logic, fresh MSS displacement, strong volume expansion, non-micro FVGs, narrow spreads, deep books, good execution quality, and cleaner portfolio fit. Respect portfolio concentration, bucket crowding, same-side exposure, and any futures throttle posture when accountMode is futures. Return strict JSON only."
+                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. You are allowed to select regime, module, confidence, and bounded execution tuning, but you may not invent symbols, directions, or unsafe sizing. Maximize professional risk-adjusted expectancy, not raw activity. Prefer candidates with aligned 1h and 15m trends, healthy ATR structure, narrow spreads, deep books, good execution quality, and cleaner portfolio fit. Respect portfolio concentration, bucket crowding, same-side exposure, and any futures throttle posture when accountMode is futures. Return strict JSON only."
             },
             {
               role: "user",
               content: JSON.stringify({
                 instructions: {
-                  objective: "Choose the single best candidate or HOLD after reviewing regime, candidate quality, open risk, trade usage, drawdown, confidence threshold, M15 / M30 structure bias, daily-open manipulation quality, Asian-range sweep quality, MSS displacement, fair value gap entry quality, volume expansion, spread, book imbalance, liquidity depth, execution quality, account-mode attribution, and portfolio concentration. Favor the highest professional expected value after costs and slippage, and prefer candidates that do not add unnecessary pressure into already crowded buckets or one-sided books.",
+                  objective: "Choose the single best candidate or HOLD after reviewing regime, candidate quality, open risk, trade usage, drawdown, confidence threshold, ATR structure, spread, book imbalance, liquidity depth, execution quality, account-mode attribution, and portfolio concentration. Favor the highest professional expected value after costs and slippage, and prefer candidates that do not add unnecessary pressure into already crowded buckets or one-sided books.",
                   mustBeAiDriven: true,
                   chooseOneCandidateOrHold: true,
                   neverInventCandidateIds: true,
@@ -244,10 +244,6 @@ class AiDecisionService {
                   neverBypassRiskControls: true,
                   confidenceThresholdIsHardGate: true,
                   futuresThrottleIsAuthoritative: true,
-                  spotModeIsLongOnly: true,
-                  meanReversionDisabled: true,
-                  spotUsesBullishDailyOpenRaidsOnly: true,
-                  futuresUsesBullishOrBearishDailyOpenRaids: true,
                   boundedTuning: {
                     sizeMultiplier: "number between 0.6 and 1.25",
                     stopLossPercent: "number between 0.6 and 2.0",
@@ -299,17 +295,7 @@ class AiDecisionService {
       const selectedMatchesSymbol = !selectedCandidate || !recommendedSymbol || selectedCandidate.symbol.toUpperCase() === recommendedSymbol;
       const selectedMatchesAction = !selectedCandidate || recommendedAction === selectedCandidate.action;
       const throttleAllowsTrade = !(input.accountMode === "futures" && input.futuresThrottle?.blockNewEntries);
-      const spotDirectionAllowed = !(input.accountMode === "spot" && recommendedAction === "SHORT");
-      const shouldTrade = Boolean(parsed.shouldTrade) && Boolean(selectedCandidate) && recommendedAction !== "HOLD" && thresholdGatePassed && throttleAllowsTrade && spotDirectionAllowed;
-
-      if (selectedCandidate && input.accountMode === "spot" && selectedCandidate.action === "SHORT") {
-        return this.buildFallback(
-          input,
-          lastDecisionAt,
-          null,
-          "Spot mode is long-only. Falling back to the deterministic strategy engine."
-        );
-      }
+      const shouldTrade = Boolean(parsed.shouldTrade) && Boolean(selectedCandidate) && recommendedAction !== "HOLD" && thresholdGatePassed && throttleAllowsTrade;
 
       if (shouldTrade && (!selectedCandidate || !selectedMatchesSymbol || !selectedMatchesAction)) {
         return this.buildFallback(
