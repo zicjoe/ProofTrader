@@ -1154,6 +1154,115 @@ function detectCrtBias(candles: OhlcCandle[]): { bias: DirectionalBias; midpoint
   return { bias: "NEUTRAL", midpoint };
 }
 
+type StructuralExecutionLevels = {
+  stopLoss: number | null;
+  takeProfit: number | null;
+  stopDistancePercent: number | null;
+  takeProfitPercent: number | null;
+};
+
+function deriveStructuralExecutionLevels(params: {
+  signalType?: string | null;
+  side: "LONG" | "SHORT";
+  entryPrice: number;
+  accountMode: ExchangeAccountMode;
+  atrPercent: number;
+  candles5m?: OhlcCandle[] | null;
+  candles1h?: OhlcCandle[] | null;
+}): StructuralExecutionLevels {
+  const { signalType, side, entryPrice, accountMode, atrPercent, candles5m, candles1h } = params;
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return { stopLoss: null, takeProfit: null, stopDistancePercent: null, takeProfitPercent: null };
+  }
+
+  const maxStopDistancePercent = accountMode === "futures" ? 4 : 2.5;
+  const minStopDistancePercent = accountMode === "futures" ? 0.5 : 0.6;
+  const atrAbsolute = entryPrice * Math.max(atrPercent, 0.35) / 100;
+  const structuralBuffer = Math.max(atrAbsolute * 0.2, entryPrice * 0.0012, 0.01);
+
+  let rawStop: number | null = null;
+  let rawTarget: number | null = null;
+
+  if (signalType === "SMC_SWEEP_RECLAIM" && candles5m && candles5m.length >= 6) {
+    const window = lastN(candles5m, Math.min(9, candles5m.length));
+    const latest = window[window.length - 1];
+    const prior = window.slice(0, -1);
+    const priorHigh = Math.max(...prior.map((candle) => candle.high));
+    const priorLow = Math.min(...prior.map((candle) => candle.low));
+
+    if (side === "LONG") {
+      const sweepLow = Math.min(latest.low, priorLow);
+      rawStop = sweepLow - structuralBuffer;
+      const opposingLiquidity = priorHigh > entryPrice ? priorHigh : null;
+      const risk = Math.max(entryPrice - rawStop, entryPrice * 0.006);
+      rawTarget = opposingLiquidity != null && opposingLiquidity >= entryPrice + risk * 1.5
+        ? opposingLiquidity
+        : entryPrice + risk * 2.2;
+    } else {
+      const sweepHigh = Math.max(latest.high, priorHigh);
+      rawStop = sweepHigh + structuralBuffer;
+      const opposingLiquidity = priorLow < entryPrice ? priorLow : null;
+      const risk = Math.max(rawStop - entryPrice, entryPrice * 0.006);
+      rawTarget = opposingLiquidity != null && opposingLiquidity <= entryPrice - risk * 1.5
+        ? opposingLiquidity
+        : entryPrice - risk * 2.2;
+    }
+  } else if (signalType === "SMC_FVG_CONTINUATION" && candles5m && candles5m.length >= 3) {
+    const left = candles5m[candles5m.length - 3];
+    const middle = candles5m[candles5m.length - 2];
+    const right = candles5m[candles5m.length - 1];
+
+    if (side === "LONG" && right.low > left.high) {
+      const displacementLow = Math.min(left.low, middle.low, right.low);
+      rawStop = displacementLow - structuralBuffer;
+      const risk = Math.max(entryPrice - rawStop, entryPrice * 0.006);
+      rawTarget = entryPrice + risk * 2.4;
+    } else if (side === "SHORT" && right.high < left.low) {
+      const displacementHigh = Math.max(left.high, middle.high, right.high);
+      rawStop = displacementHigh + structuralBuffer;
+      const risk = Math.max(rawStop - entryPrice, entryPrice * 0.006);
+      rawTarget = entryPrice - risk * 2.4;
+    }
+  } else if (signalType === "CRT_RANGE_RAID" && candles1h && candles1h.length >= 2) {
+    const reference = candles1h[candles1h.length - 2];
+    const latest = candles1h[candles1h.length - 1];
+
+    if (side === "LONG" && latest.low < reference.low && latest.close > reference.low) {
+      const raidLow = Math.min(reference.low, latest.low);
+      rawStop = raidLow - structuralBuffer;
+      const risk = Math.max(entryPrice - rawStop, entryPrice * 0.006);
+      rawTarget = reference.high > entryPrice && reference.high >= entryPrice + risk * 1.4
+        ? reference.high
+        : entryPrice + risk * 2.0;
+    } else if (side === "SHORT" && latest.high > reference.high && latest.close < reference.high) {
+      const raidHigh = Math.max(reference.high, latest.high);
+      rawStop = raidHigh + structuralBuffer;
+      const risk = Math.max(rawStop - entryPrice, entryPrice * 0.006);
+      rawTarget = reference.low < entryPrice && reference.low <= entryPrice - risk * 1.4
+        ? reference.low
+        : entryPrice - risk * 2.0;
+    }
+  }
+
+  if (rawStop == null) {
+    return { stopLoss: null, takeProfit: null, stopDistancePercent: null, takeProfitPercent: null };
+  }
+
+  const rawStopDistancePercent = Math.abs((entryPrice - rawStop) / entryPrice) * 100;
+  const stopDistancePercent = clamp(rawStopDistancePercent, minStopDistancePercent, maxStopDistancePercent);
+  const stopLoss = round(entryPrice * (side === "LONG" ? 1 - stopDistancePercent / 100 : 1 + stopDistancePercent / 100), 2);
+  let rawTargetDistancePercent = rawTarget == null ? stopDistancePercent * 2 : Math.abs((rawTarget - entryPrice) / entryPrice) * 100;
+  rawTargetDistancePercent = clamp(rawTargetDistancePercent, Math.max(stopDistancePercent * 1.6, 1.2), 5);
+  const takeProfit = round(entryPrice * (side === "LONG" ? 1 + rawTargetDistancePercent / 100 : 1 - rawTargetDistancePercent / 100), 2);
+
+  return {
+    stopLoss,
+    takeProfit,
+    stopDistancePercent,
+    takeProfitPercent: rawTargetDistancePercent
+  };
+}
+
 function inferMarketRegime(context: MarketContext) {
   if (context.executionQuality < 0.42 || context.spreadBps > 16 || context.atr15mPercent > 2.8) {
     return "Risk Off";
@@ -2372,6 +2481,7 @@ class StateStore {
     price: number,
     snapshot: ProofTraderSnapshot,
     tuning?: {
+      signalType?: string | null;
       sizeMultiplier?: number | null;
       stopLossPercent?: number | null;
       takeProfitPercent?: number | null;
@@ -2380,6 +2490,8 @@ class StateStore {
       liquidityUsd?: number | null;
       volatilityPercent?: number | null;
       requestedLeverage?: number | null;
+      candles5m?: OhlcCandle[] | null;
+      candles1h?: OhlcCandle[] | null;
     }
   ) {
     const policy = snapshot.risk.policy;
@@ -2425,12 +2537,33 @@ class StateStore {
         liquidationPrice = calculateLiquidationPrice(price, side, leverage, accountMode);
         liquidationDistancePercent = calculateLiquidationDistancePercent(price, liquidationPrice);
       }
+    }
+
+    const structuralLevels = deriveStructuralExecutionLevels({
+      signalType: tuning?.signalType ?? null,
+      side,
+      entryPrice: price,
+      accountMode,
+      atrPercent: rawAtrPercent,
+      candles5m: tuning?.candles5m ?? null,
+      candles1h: tuning?.candles1h ?? null
+    });
+
+    if (structuralLevels.stopDistancePercent != null) {
+      stopDistancePercent = structuralLevels.stopDistancePercent / 100;
+    }
+
+    if (accountMode === "futures") {
       const safeStopCap = Math.max(((liquidationDistancePercent ?? policy.futuresMinLiquidationDistancePercent) - 2.5) / 100, 0.005);
       stopDistancePercent = Math.min(stopDistancePercent, safeStopCap);
       stopDistancePercent = Math.max(stopDistancePercent, 0.005);
     }
 
-    const takeProfitPercent = clamp((tuning?.takeProfitPercent ?? Math.max(stopDistancePercent * 220, accountMode === "futures" ? 1.6 : 1.8)) / 100, Math.max(stopDistancePercent * 1.5, 0.012), 0.05);
+    let takeProfitPercent = clamp((tuning?.takeProfitPercent ?? Math.max(stopDistancePercent * 220, accountMode === "futures" ? 1.6 : 1.8)) / 100, Math.max(stopDistancePercent * 1.5, 0.012), 0.05);
+    if (structuralLevels.takeProfitPercent != null) {
+      takeProfitPercent = clamp(structuralLevels.takeProfitPercent / 100, Math.max(stopDistancePercent * 1.6, 0.012), 0.05);
+    }
+
     const notionalFromRisk = riskBudget / Math.max(stopDistancePercent, 0.001);
     const configuredNotional = Math.max(snapshot.strategy.runner.tradeSizeUsd * sizeMultiplier * executionQuality * volatilityPenalty, 0);
     const liquidityCap = tuning?.liquidityUsd ? tuning.liquidityUsd * 0.08 : Number.POSITIVE_INFINITY;
@@ -3478,15 +3611,19 @@ class StateStore {
       ? Math.min(snapshot.settings.exchange.futuresLeverage, futuresThrottle.leverageCap, allocationPlan?.leverageCap ?? snapshot.settings.exchange.futuresLeverage)
       : 1;
 
+    const structureDrivenSignal = topCandidate.type.startsWith("SMC_") || topCandidate.type.startsWith("CRT_");
     const order = this.computeStrategyOrder(topCandidate.symbol, topCandidate.action, topCandidate.price, snapshot, {
+      signalType: topCandidate.type,
       sizeMultiplier: allocationAdjustedSizeMultiplier,
-      stopLossPercent: aiDecision.stopLossPercent ?? topCandidate.stopLossPercent,
-      takeProfitPercent: aiDecision.takeProfitPercent ?? topCandidate.takeProfitPercent,
+      stopLossPercent: structureDrivenSignal ? topCandidate.stopLossPercent : (aiDecision.stopLossPercent ?? topCandidate.stopLossPercent),
+      takeProfitPercent: structureDrivenSignal ? topCandidate.takeProfitPercent : (aiDecision.takeProfitPercent ?? topCandidate.takeProfitPercent),
       atrPercent: topContext?.atr15mPercent ?? topCandidate.atrPercent,
       executionQuality: topContext?.executionQuality ?? topCandidate.executionQuality,
       liquidityUsd: topContext?.liquidityUsd ?? topCandidate.liquidityUsd,
       volatilityPercent: topContext?.realizedVolatilityPercent ?? topContext?.atr15mPercent ?? topCandidate.volatilityPercent,
-      requestedLeverage
+      requestedLeverage,
+      candles5m: topContext?.candles5m ?? null,
+      candles1h: topContext?.candles1h ?? null
     });
     snapshot.strategy.marketConditions = {
       ...snapshot.strategy.marketConditions,
