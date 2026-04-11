@@ -19,54 +19,50 @@ import {
 export function LandingPage() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
-      {/* Navigation */}
-      <nav className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <img src="/logo.png" alt="ProofTrader logo" className="h-10 w-10 rounded-lg object-contain" />
-              <div>
-                <h1 className="text-xl font-bold">ProofTrader</h1>
-                <p className="text-xs text-zinc-400">Autonomous Trading Agent</p>
-              </div>
+      <nav className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="ProofTrader logo" className="h-10 w-10 rounded-lg object-cover" />
+            <div>
+              <h1 className="text-xl font-bold">ProofTrader</h1>
+              <p className="text-xs text-zinc-400">Autonomous Trading Agent</p>
             </div>
-            <div className="flex items-center gap-4">
-              <Link to="/app">
-                <Button variant="ghost">View Demo</Button>
-              </Link>
-              <Link to="/app">
-                <Button className="bg-blue-600 hover:bg-blue-700">
-                  Launch App
-                  <ArrowRight className="ml-2 w-4 h-4" />
-                </Button>
-              </Link>
-            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link to="/app">
+              <Button variant="ghost">View Demo</Button>
+            </Link>
+            <Link to="/app">
+              <Button className="bg-blue-600 hover:bg-blue-700">
+                Launch App
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </Link>
           </div>
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <div className="text-center max-w-4xl mx-auto">
-          <Badge className="mb-6 bg-blue-950 text-blue-400 border-blue-800">
-            Verifiable Autonomous Trading
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mx-auto max-w-4xl text-center">
+          <Badge className="mb-6 border-blue-800 bg-blue-950 text-blue-300">
+            Hosted Execution • Risk Controlled • Paper Trading Ready
           </Badge>
-          <h1 className="text-5xl font-bold mb-6 leading-tight">
-            AI-Powered Trading with
+          <h1 className="mb-6 text-5xl font-bold leading-tight">
+            AI Assisted Crypto Trading with
             <br />
             <span className="bg-gradient-to-r from-blue-500 to-violet-600 bg-clip-text text-transparent">
-              On-Chain Proof of Integrity
+              Verifiable Execution
             </span>
           </h1>
-          <p className="text-xl text-zinc-400 mb-8 leading-relaxed">
-            ProofTrader combines autonomous AI trading agents, institutional-grade risk controls,
-            and blockchain-based validation to deliver transparent, trustworthy automated trading.
+          <p className="mb-8 text-xl leading-relaxed text-zinc-400">
+            ProofTrader combines AI assisted trade selection, backend risk controls, hosted Kraken
+            CLI execution, and persistent trading visibility in one platform.
           </p>
           <div className="flex items-center justify-center gap-4">
             <Link to="/app">
               <Button size="lg" className="bg-blue-600 hover:bg-blue-700">
                 Launch App
-                <ArrowRight className="ml-2 w-5 h-5" />
+                <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
             <Link to="/app">
@@ -78,110 +74,117 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Metrics Preview */}
-      <section className="max-w-7xl mx-auto px-6 py-12">
-        <div className="grid grid-cols-4 gap-6">
-          <Card className="bg-zinc-900 border-zinc-800">
+      <section className="mx-auto max-w-7xl px-6 py-12">
+        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-zinc-400">Total Equity</span>
-                <TrendingUp className="w-4 h-4 text-green-500" />
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm text-zinc-400">Hosted Execution</span>
+                <Zap className="h-4 w-4 text-amber-500" />
               </div>
-              <div className="text-3xl font-bold text-white mb-1">$487,329</div>
-              <div className="text-sm text-green-500">+12.4% All Time</div>
+              <div className="mb-2 text-2xl font-bold text-white">Kraken CLI Runner</div>
+              <div className="text-sm text-zinc-400">
+                Orders flow through a hosted runner instead of depending on a local terminal session.
+              </div>
             </CardContent>
           </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-zinc-400">Win Rate</span>
-                <Activity className="w-4 h-4 text-blue-500" />
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm text-zinc-400">Trading Modes</span>
+                <TrendingUp className="h-4 w-4 text-green-500" />
               </div>
-              <div className="text-3xl font-bold text-white mb-1">68.3%</div>
-              <div className="text-sm text-zinc-400">342 Trades</div>
+              <div className="mb-2 text-2xl font-bold text-white">Spot + Futures</div>
+              <div className="text-sm text-zinc-400">
+                Supports paper trading workflows across both spot and futures from one dashboard.
+              </div>
             </CardContent>
           </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-zinc-400">Sharpe Ratio</span>
-                <LineChart className="w-4 h-4 text-violet-500" />
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm text-zinc-400">Risk Controls</span>
+                <Shield className="h-4 w-4 text-violet-500" />
               </div>
-              <div className="text-3xl font-bold text-white mb-1">2.14</div>
-              <div className="text-sm text-zinc-400">Risk-Adjusted</div>
+              <div className="mb-2 text-2xl font-bold text-white">Backend Owned</div>
+              <div className="text-sm text-zinc-400">
+                AI recommendations remain bounded by portfolio, leverage, and execution rules.
+              </div>
             </CardContent>
           </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-zinc-400">Proofs Published</span>
-                <CheckCircle className="w-4 h-4 text-green-500" />
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm text-zinc-400">Visibility</span>
+                <Activity className="h-4 w-4 text-blue-500" />
               </div>
-              <div className="text-3xl font-bold text-white mb-1">2,847</div>
-              <div className="text-sm text-zinc-400">Verified On-Chain</div>
+              <div className="mb-2 text-2xl font-bold text-white">Persistent State</div>
+              <div className="text-sm text-zinc-400">
+                Dashboard metrics, positions, logs, and account state stay observable across the app.
+              </div>
             </CardContent>
           </Card>
         </div>
       </section>
 
-      {/* Value Proposition */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <div className="grid md:grid-cols-2 gap-12 items-center">
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <div className="grid items-center gap-12 md:grid-cols-2">
           <div>
-            <h2 className="text-3xl font-bold mb-4">
-              Autonomous Trading You Can Trust
-            </h2>
-            <p className="text-lg text-zinc-400 mb-6">
-              Traditional automated trading systems operate as black boxes. ProofTrader changes
-              that with cryptographic proof of every decision, action, and outcome.
+            <h2 className="mb-4 text-3xl font-bold">A Trading Platform, Not a Black Box Bot</h2>
+            <p className="mb-6 text-lg text-zinc-400">
+              Many trading bots hide the decision path behind a single performance claim.
+              ProofTrader is built to make trading activity easier to inspect, evaluate, and trust.
             </p>
             <ul className="space-y-4">
               {[
-                "AI-powered market analysis and trade execution",
-                "Real-time risk management with circuit breakers",
-                "Every action recorded and verified on-chain",
-                "Full transparency without compromising strategy",
+                "AI assisted trade selection without removing backend control",
+                "Structured risk checks before execution is allowed",
+                "Hosted Kraken CLI execution path for cloud-based operation",
+                "Persistent logs, positions, and dashboard state for reviewability",
               ].map((item, i) => (
                 <li key={i} className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" />
+                  <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-500" />
                   <span className="text-zinc-300">{item}</span>
                 </li>
               ))}
             </ul>
           </div>
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-8">
               <div className="space-y-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-blue-950 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Brain className="w-6 h-6 text-blue-500" />
+                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-blue-950">
+                    <Brain className="h-6 w-6 text-blue-500" />
                   </div>
                   <div>
-                    <h3 className="font-semibold mb-1">AI Strategy Engine</h3>
+                    <h3 className="mb-1 font-semibold">Strategy Evaluation Layer</h3>
                     <p className="text-sm text-zinc-400">
-                      Advanced models analyze market conditions and identify high-probability setups
+                      The strategy engine scans for trade candidates while AI helps rank or reject
+                      them inside bounded rules.
                     </p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-violet-950 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Shield className="w-6 h-6 text-violet-500" />
+                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-violet-950">
+                    <Shield className="h-6 w-6 text-violet-500" />
                   </div>
                   <div>
-                    <h3 className="font-semibold mb-1">Risk Control Layer</h3>
+                    <h3 className="mb-1 font-semibold">Risk Control Layer</h3>
                     <p className="text-sm text-zinc-400">
-                      Every trade must pass strict risk checks before execution
+                      Exposure caps, leverage limits, cooldowns, and execution filters stay
+                      authoritative over AI output.
                     </p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-green-950 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <CheckCircle className="w-6 h-6 text-green-500" />
+                  <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-lg bg-green-950">
+                    <LineChart className="h-6 w-6 text-green-500" />
                   </div>
                   <div>
-                    <h3 className="font-semibold mb-1">Proof Publishing</h3>
+                    <h3 className="mb-1 font-semibold">Execution and Visibility</h3>
                     <p className="text-sm text-zinc-400">
-                      Cryptographic validation artifacts published to immutable ledger
+                      Trades, positions, balance changes, and decision logs remain visible through
+                      the dashboard and persisted backend state.
                     </p>
                   </div>
                 </div>
@@ -191,124 +194,128 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Execution Layer */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold mb-4">
-            Professional-Grade Execution
-          </h2>
-          <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
-            Direct integration with Kraken's institutional API delivers fast, reliable execution
-            with real-time order management.
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mb-12 text-center">
+          <h2 className="mb-4 text-3xl font-bold">Structured Execution for Real Operations</h2>
+          <p className="mx-auto max-w-2xl text-lg text-zinc-400">
+            ProofTrader keeps execution hosted, observable, and connected to the rest of the
+            application state instead of treating order placement as a disconnected script.
           </p>
         </div>
-        <div className="grid md:grid-cols-3 gap-6">
-          <Card className="bg-zinc-900 border-zinc-800">
+        <div className="grid gap-6 md:grid-cols-3">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <Zap className="w-10 h-10 text-amber-500 mb-4" />
-              <h3 className="text-xl font-semibold mb-2">Lightning Fast</h3>
+              <Zap className="mb-4 h-10 w-10 text-amber-500" />
+              <h3 className="mb-2 text-xl font-semibold">Hosted Runner Path</h3>
               <p className="text-zinc-400">
-                Sub-second order placement with smart routing and minimal slippage
+                The backend talks to a cloud-hosted runner that executes through Kraken CLI and
+                keeps the intended deployment path online.
               </p>
             </CardContent>
           </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <Database className="w-10 h-10 text-blue-500 mb-4" />
-              <h3 className="text-xl font-semibold mb-2">Reliable Infrastructure</h3>
+              <Database className="mb-4 h-10 w-10 text-blue-500" />
+              <h3 className="mb-2 text-xl font-semibold">Persistent Application State</h3>
               <p className="text-zinc-400">
-                Built on battle-tested stack with PostgreSQL, Redis, and robust job queues
+                PostgreSQL and Prisma keep workspace state, positions, trades, and dashboard
+                hydration consistent across sessions.
               </p>
             </CardContent>
           </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <Network className="w-10 h-10 text-violet-500 mb-4" />
-              <h3 className="text-xl font-semibold mb-3">Enterprise Ready</h3>
+              <Network className="mb-4 h-10 w-10 text-violet-500" />
+              <h3 className="mb-2 text-xl font-semibold">Operational Visibility</h3>
               <p className="text-zinc-400">
-                Comprehensive logging, monitoring, and alerting for mission-critical operations
+                Logs, synced metrics, and position state help the user understand what the system
+                is doing and why.
               </p>
             </CardContent>
           </Card>
         </div>
       </section>
 
-      {/* How It Works */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold mb-4">How ProofTrader Works</h2>
-          <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
-            A complete autonomous trading workflow with verification at every step
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mb-12 text-center">
+          <h2 className="mb-4 text-3xl font-bold">How ProofTrader Works</h2>
+          <p className="mx-auto max-w-2xl text-lg text-zinc-400">
+            A complete trading workflow that keeps strategy evaluation, execution, and state
+            changes connected inside one system.
           </p>
         </div>
-        <div className="grid md:grid-cols-4 gap-8">
+        <div className="grid gap-8 md:grid-cols-4">
           {[
             {
               step: "01",
-              title: "Market Analysis",
-              description: "AI continuously monitors market conditions and identifies trading opportunities",
+              title: "Evaluate Market",
+              description:
+                "The engine scans watched pairs, ranks trade candidates, and decides whether conditions are good enough to act.",
             },
             {
               step: "02",
-              title: "Risk Validation",
-              description: "Every signal passes through strict risk controls before execution approval",
+              title: "Apply Risk Rules",
+              description:
+                "Risk policy, exposure limits, leverage caps, and execution filters decide whether a candidate is allowed.",
             },
             {
               step: "03",
-              title: "Execute Trade",
-              description: "Approved orders execute instantly through Kraken with optimal routing",
+              title: "Execute Through Runner",
+              description:
+                "Approved orders flow from the API to the hosted kraken-runner and into Kraken CLI for paper execution.",
             },
             {
               step: "04",
-              title: "Publish Proof",
-              description: "Trade metadata and validation artifacts recorded on-chain for verification",
+              title: "Sync State and Logs",
+              description:
+                "Positions, balances, metrics, and logs are persisted and reflected back into the dashboard for review.",
             },
           ].map((item) => (
             <div key={item.step} className="relative">
-              <div className="text-6xl font-bold text-zinc-800 mb-4">{item.step}</div>
-              <h3 className="text-xl font-semibold mb-2">{item.title}</h3>
+              <div className="mb-4 text-6xl font-bold text-zinc-800">{item.step}</div>
+              <h3 className="mb-2 text-xl font-semibold">{item.title}</h3>
               <p className="text-zinc-400">{item.description}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Architecture */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <div className="text-center mb-12">
-          <h2 className="text-3xl font-bold mb-4">Built on Proven Technology</h2>
-          <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
-            Production-ready architecture designed for reliability and scale
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mb-12 text-center">
+          <h2 className="mb-4 text-3xl font-bold">Built on a Real Product Stack</h2>
+          <p className="mx-auto max-w-2xl text-lg text-zinc-400">
+            The architecture is designed around a deployed application flow, not just a local
+            script or isolated trading demo.
           </p>
         </div>
-        <Card className="bg-zinc-900 border-zinc-800">
+        <Card className="border-zinc-800 bg-zinc-900">
           <CardContent className="p-8">
-            <div className="grid md:grid-cols-3 gap-8">
+            <div className="grid gap-8 md:grid-cols-3">
               <div>
-                <h3 className="font-semibold mb-4 text-blue-400">Frontend</h3>
+                <h3 className="mb-4 font-semibold text-blue-400">Frontend</h3>
                 <ul className="space-y-2 text-sm text-zinc-400">
-                  <li>• React & TypeScript</li>
-                  <li>• Next.js Framework</li>
-                  <li>• Tailwind CSS</li>
-                  <li>• Real-time WebSockets</li>
+                  <li>• React + TypeScript</li>
+                  <li>• Vite application</li>
+                  <li>• Tailwind UI</li>
+                  <li>• Live dashboard views</li>
                 </ul>
               </div>
               <div>
-                <h3 className="font-semibold mb-4 text-violet-400">Backend</h3>
+                <h3 className="mb-4 font-semibold text-violet-400">Backend</h3>
                 <ul className="space-y-2 text-sm text-zinc-400">
-                  <li>• Fastify API Server</li>
-                  <li>• PostgreSQL Database</li>
-                  <li>• Prisma ORM</li>
-                  <li>• Redis Cache & Queue</li>
+                  <li>• Fastify API server</li>
+                  <li>• PostgreSQL database</li>
+                  <li>• Prisma persistence layer</li>
+                  <li>• Strategy and risk services</li>
                 </ul>
               </div>
               <div>
-                <h3 className="font-semibold mb-4 text-green-400">Integration</h3>
+                <h3 className="mb-4 font-semibold text-green-400">Execution</h3>
                 <ul className="space-y-2 text-sm text-zinc-400">
-                  <li>• Kraken Exchange CLI</li>
-                  <li>• ERC-8004 Identity</li>
-                  <li>• On-chain Proofs</li>
-                  <li>• Smart Contracts</li>
+                  <li>• Railway hosted kraken-runner</li>
+                  <li>• Kraken CLI execution layer</li>
+                  <li>• Paper trading workflows</li>
+                  <li>• Exportable proof and identity outputs</li>
                 </ul>
               </div>
             </div>
@@ -316,48 +323,51 @@ export function LandingPage() {
         </Card>
       </section>
 
-      {/* Why Verifiable Trading Matters */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <div className="grid md:grid-cols-2 gap-12 items-center">
-          <Card className="bg-zinc-900 border-zinc-800">
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <div className="grid items-center gap-12 md:grid-cols-2">
+          <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-8">
-              <Lock className="w-12 h-12 text-blue-500 mb-6" />
-              <h3 className="text-2xl font-bold mb-4">Trust Through Transparency</h3>
-              <p className="text-zinc-400 mb-6">
-                Traditional trading bots are black boxes. You can't verify their decisions,
-                validate their risk management, or prove their performance claims.
+              <Lock className="mb-6 h-12 w-12 text-blue-500" />
+              <h3 className="mb-4 text-2xl font-bold">Trust Through Reviewability</h3>
+              <p className="mb-6 text-zinc-400">
+                Traditional trading bots often hide execution logic behind surface-level metrics.
+                ProofTrader is built to expose state, logs, and execution flow more clearly.
               </p>
               <p className="text-zinc-400">
-                ProofTrader uses cryptographic proofs to create an immutable audit trail of
-                every action, giving you verifiable transparency without exposing strategy secrets.
+                That makes it easier to evaluate decisions, monitor risk posture, and understand
+                how the platform behaves over time without pretending the system is a black box.
               </p>
             </CardContent>
           </Card>
           <div>
-            <h2 className="text-3xl font-bold mb-6">Why It Matters</h2>
+            <h2 className="mb-6 text-3xl font-bold">Why It Matters</h2>
             <ul className="space-y-4">
               {[
                 {
                   title: "Auditability",
-                  description: "Every decision and action is recorded and can be independently verified",
+                  description:
+                    "Trade flow, position state, and system behavior can be reviewed from the dashboard and backend logs.",
                 },
                 {
                   title: "Accountability",
-                  description: "Cryptographic signatures prove agent identity and intent",
+                  description:
+                    "AI assists with trade selection, but execution remains bounded by backend-owned controls.",
                 },
                 {
-                  title: "Compliance",
-                  description: "Complete audit trail for regulatory requirements",
+                  title: "Deployability",
+                  description:
+                    "The hosted runner path makes the product closer to real cloud operation than a local-only script.",
                 },
                 {
                   title: "Trust",
-                  description: "Verifiable proof builds confidence with investors and partners",
+                  description:
+                    "Clear system state helps users judge the platform by observable behavior instead of marketing claims.",
                 },
               ].map((item) => (
                 <li key={item.title} className="flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-500 mt-1 flex-shrink-0" />
+                  <CheckCircle className="mt-1 h-5 w-5 flex-shrink-0 text-green-500" />
                   <div>
-                    <h4 className="font-semibold mb-1">{item.title}</h4>
+                    <h4 className="mb-1 font-semibold">{item.title}</h4>
                     <p className="text-sm text-zinc-400">{item.description}</p>
                   </div>
                 </li>
@@ -367,21 +377,19 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <Card className="bg-gradient-to-br from-blue-950 to-violet-950 border-blue-800">
+      <section className="mx-auto max-w-7xl px-6 py-20">
+        <Card className="border-blue-800 bg-gradient-to-br from-blue-950 to-violet-950">
           <CardContent className="p-12 text-center">
-            <h2 className="text-4xl font-bold mb-4">
-              Ready to Start Trading with Confidence?
-            </h2>
-            <p className="text-xl text-zinc-300 mb-8 max-w-2xl mx-auto">
-              Join the future of transparent, verifiable autonomous trading
+            <h2 className="mb-4 text-4xl font-bold">Ready to Explore ProofTrader?</h2>
+            <p className="mx-auto mb-8 max-w-2xl text-xl text-zinc-300">
+              Launch the app to review the dashboard, initialize paper trading, and inspect the
+              strategy, positions, and risk workflow directly.
             </p>
             <div className="flex items-center justify-center gap-4">
               <Link to="/app">
                 <Button size="lg" className="bg-white text-zinc-900 hover:bg-zinc-100">
                   Launch App
-                  <ArrowRight className="ml-2 w-5 h-5" />
+                  <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
               </Link>
               <Link to="/app">
@@ -394,44 +402,52 @@ export function LandingPage() {
         </Card>
       </section>
 
-      {/* Footer */}
       <footer className="border-t border-zinc-800 bg-zinc-900/50">
-        <div className="max-w-7xl mx-auto px-6 py-12">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
+        <div className="mx-auto max-w-7xl px-6 py-12">
+          <div className="mb-8 grid gap-8 md:grid-cols-4">
             <div>
-              <div className="flex items-center gap-3 mb-4">
-                <img src="/logo.png" alt="ProofTrader logo" className="h-8 w-8 rounded-lg object-contain" />
+              <div className="mb-4 flex items-center gap-3">
+                <img src="/logo.png" alt="ProofTrader logo" className="h-8 w-8 rounded-lg object-cover" />
                 <span className="font-bold">ProofTrader</span>
               </div>
               <p className="text-sm text-zinc-400">
-                Autonomous AI trading with on-chain proof of integrity
+                AI assisted crypto trading with hosted execution, risk controls, and persistent
+                dashboard visibility.
               </p>
             </div>
             <div>
-              <h4 className="font-semibold mb-4">Product</h4>
+              <h4 className="mb-4 font-semibold">Product</h4>
               <ul className="space-y-2 text-sm text-zinc-400">
-                <li><a href="#" className="hover:text-white">Features</a></li>
-                <li><a href="#" className="hover:text-white">Documentation</a></li>
-                <li><a href="#" className="hover:text-white">API Reference</a></li>
-                <li><a href="#" className="hover:text-white">Pricing</a></li>
+                <li>Dashboard</li>
+                <li>Strategy Engine</li>
+                <li>Positions</li>
+                <li>Paper Trading</li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-4">Company</h4>
+              <h4 className="mb-4 font-semibold">Stack</h4>
               <ul className="space-y-2 text-sm text-zinc-400">
-                <li><a href="#" className="hover:text-white">About</a></li>
-                <li><a href="#" className="hover:text-white">Blog</a></li>
-                <li><a href="#" className="hover:text-white">Careers</a></li>
-                <li><a href="#" className="hover:text-white">Contact</a></li>
+                <li>React + Vite</li>
+                <li>Fastify + Prisma</li>
+                <li>PostgreSQL</li>
+                <li>Kraken CLI Runner</li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-4">Legal</h4>
+              <h4 className="mb-4 font-semibold">Access</h4>
               <ul className="space-y-2 text-sm text-zinc-400">
-                <li><a href="#" className="hover:text-white">Privacy</a></li>
-                <li><a href="#" className="hover:text-white">Terms</a></li>
-                <li><a href="#" className="hover:text-white">Security</a></li>
-                <li><a href="#" className="hover:text-white">Compliance</a></li>
+                <li>
+                  <Link to="/app" className="hover:text-white">
+                    Launch App
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/app" className="hover:text-white">
+                    View Demo
+                  </Link>
+                </li>
+                <li>Hosted runner enabled</li>
+                <li>Paper trading workflow</li>
               </ul>
             </div>
           </div>
