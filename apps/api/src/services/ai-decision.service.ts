@@ -230,13 +230,13 @@ class AiDecisionService {
             {
               role: "system",
               content:
-                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. The active model is a mean reversion plus trend filter hybrid: BTC 4H macro regime first, pair 1H regime agreement second, then 15m RSI and Bollinger confirmation with volume, volatility, wick, and execution-quality filters. Crypto trades 24/7, so never use session logic. Spot mode is long only. Futures mode may choose long or short, but you must respect any futures throttle posture, concentration limits, and hard risk controls. You may tune only bounded execution envelope values and may not invent symbols, directions, or unsafe sizing. Return strict JSON only."
+                "You are the bounded strategy brain for an autonomous crypto paper-trading agent. You must choose only from the provided candidate ids or HOLD. The active model is a hybrid execution system with two modules: trend pullback continuation for cleaner recurring setups and breakout retest confirmation for larger expansion trades. Crypto trades 24/7, so never use session logic. Never approve a breakout candidate without a confirmed retest, and never approve a pullback candidate unless trend structure, reclaim confirmation, and bounded risk all remain intact. Spot mode is long only. Futures mode may choose long or short, but you must respect any futures throttle posture, concentration limits, and hard risk controls. You may tune only bounded execution envelope values and may not invent symbols, directions, or unsafe sizing. Return strict JSON only."
             },
             {
               role: "user",
               content: JSON.stringify({
                 instructions: {
-                  objective: "Choose the single best candidate or HOLD after reviewing BTC macro regime, pair regime agreement, RSI and Bollinger confirmation, ATR-based risk envelope, volume quality, wick behavior, spread, book quality, drawdown, trade usage, and portfolio concentration. Favor clean mean-reversion entries that align with the trend filter rather than raw activity or momentum chasing.",
+                  objective: "Choose the single best candidate or HOLD after reviewing whether the current market better supports a trend pullback continuation or a breakout retest. Evaluate trend structure, pullback quality, reclaim confirmation, compression quality, breakout conviction, retest confirmation, volume expansion, RSI and MACD agreement, ATR-based risk envelope, spread, book quality, drawdown, trade usage, BTC risk-off state, and portfolio concentration. Favor positive expectancy and bounded risk over raw trade count, but allow the pullback module to supply cleaner recurring setups when breakout conditions are absent.",
                   mustBeAiDriven: true,
                   chooseOneCandidateOrHold: true,
                   neverInventCandidateIds: true,
@@ -246,8 +246,8 @@ class AiDecisionService {
                   futuresThrottleIsAuthoritative: true,
                   boundedTuning: {
                     sizeMultiplier: "number between 0.55 and 1.0",
-                    stopLossPercent: "number between 0.8 and 6.5",
-                    takeProfitPercent: "number between 2.4 and 18.0"
+                    stopLossPercent: "number between 0.45 and 6.5",
+                    takeProfitPercent: "number between 1.4 and 18.0"
                   },
                   responseShape: {
                     regime: "string",
@@ -260,8 +260,8 @@ class AiDecisionService {
                     strategyModule: "string|null",
                     executionBias: "string|null",
                     sizeMultiplier: "number between 0.55 and 1.0 or null",
-                    stopLossPercent: "number between 0.8 and 6.5 or null",
-                    takeProfitPercent: "number between 2.4 and 18.0 or null",
+                    stopLossPercent: "number between 0.6 and 6.5 or null",
+                    takeProfitPercent: "number between 3.0 and 18.0 or null",
                     rankingSummary: "string",
                     commentary: "string",
                     rationale: "string",
@@ -378,7 +378,7 @@ class AiDecisionService {
         commentary ??
         (shouldTrade
           ? `The deterministic hybrid engine favored ${topCandidate!.symbol} ${topCandidate!.action} via ${topCandidate!.module} after reviewing ${input.candidates.length} bounded candidates.${throttleSummary ? ` ${throttleSummary}` : ""}`
-          : `The deterministic hybrid engine reviewed ${input.candidates.length} bounded candidates and found no trend-aligned mean reversion setup strong enough to trade.${throttleSummary ? ` ${throttleSummary}` : ""}`),
+          : `The deterministic hybrid engine reviewed ${input.candidates.length} bounded candidates and found no pullback reclaim or breakout retest setup strong enough to trade.${throttleSummary ? ` ${throttleSummary}` : ""}`),
       rationale: shouldTrade
         ? `${topCandidate!.module} ranked highest with ${Math.round(topCandidate!.confidence * 100)}% confidence in a ${topCandidate!.regime} regime, ${topCandidate!.spreadBps.toFixed(1)}bps spread, ${(topCandidate!.executionQuality * 100).toFixed(0)}% execution quality, and a ${topCandidate!.bucket} bucket profile that stayed acceptable for the current portfolio.`
         : throttleAllowsTrade
@@ -386,7 +386,7 @@ class AiDecisionService {
           : "Futures throttle blocked fresh entries until futures attribution stabilizes.",
       riskNote: shouldTrade
         ? `Mode trade usage: ${input.todaysExecutedTrades}/${input.effectiveMaxTradesPerDay}. Consecutive losses: ${input.consecutiveLosses}. Balance available: $${round(input.paperBalance, 2)}. Drawdown: ${round(input.currentDrawdownPercent, 2)}%.${throttleSummary ? ` ${throttleSummary}` : ""}`
-        : `The strategy engine stayed flat because the trend filter and confirmation stack did not clear the effective threshold of ${Math.round(input.effectiveConfidenceThreshold * 100)}%.${throttleSummary ? ` ${throttleSummary}` : ""}`,
+        : `The strategy engine stayed flat because neither the trend-pullback module nor the breakout-retest module cleared the effective threshold of ${Math.round(input.effectiveConfidenceThreshold * 100)}%.${throttleSummary ? ` ${throttleSummary}` : ""}`,
       error,
       selectedCandidateId: shouldTrade ? topCandidate!.id : null,
       strategyModule: shouldTrade ? topCandidate!.module : null,
