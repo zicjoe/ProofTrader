@@ -374,7 +374,7 @@ function buildPortfolioContext(snapshot: ProofTraderSnapshot, mode: ExchangeAcco
       const bucketPositions = modePositions.filter((position) => correlatedBucket(position.symbol) === bucket);
       const bucketUtilization = round(bucketPositions.reduce((sum, position) => sum + positionOpenNotionalUsd(position), 0) / Math.max(bucketExposureCap(snapshot, mode), 1), 2);
       return bucketUtilization >= 0.45 || bucketPositions.length >= 2;
-    }))) as string[];
+    })));
   const portfolioHeat = round(clamp((exposureUtilization * 0.5) + (positionUtilization * 0.2) + (drawdownUtilization * 0.2) + (crowdedBuckets.length > 0 ? 0.1 : 0), 0, 1.5), 2);
   const reasons = [
     exposureUtilization >= 0.65 ? `${accountModeLabel(mode)} open exposure is already using ${Math.round(exposureUtilization * 100)}% of its working capacity.` : null,
@@ -1040,267 +1040,6 @@ function computeAtrPercent(candles: OhlcCandle[], period = 14) {
   });
   const latestClose = window[window.length - 1]?.close ?? 0;
   return latestClose === 0 ? 0 : (average(trueRanges) / latestClose) * 100;
-}
-
-
-function exponentialMovingAverage(values: number[], period: number) {
-  if (values.length === 0) return 0;
-  const smoothing = 2 / (period + 1);
-  let ema = average(values.slice(0, Math.min(period, values.length)));
-  for (let index = Math.min(period, values.length); index < values.length; index += 1) {
-    ema = (values[index] * smoothing) + (ema * (1 - smoothing));
-  }
-  return ema;
-}
-
-function classifyEmaRegime(candles: OhlcCandle[], fastPeriod: number, slowPeriod: number, neutralThresholdPercent = 1) {
-  const closes = closeSeries(candles);
-  if (closes.length < slowPeriod) {
-    return { regime: "NEUTRAL" as const, fastEma: 0, slowEma: 0, separationPercent: 0 };
-  }
-
-  const fastEma = exponentialMovingAverage(closes, fastPeriod);
-  const slowEma = exponentialMovingAverage(closes, slowPeriod);
-  const separationPercent = slowEma === 0 ? 0 : Math.abs((fastEma - slowEma) / slowEma) * 100;
-
-  if (separationPercent <= neutralThresholdPercent) {
-    return { regime: "NEUTRAL" as const, fastEma, slowEma, separationPercent };
-  }
-
-  return {
-    regime: fastEma > slowEma ? ("BULL" as const) : ("BEAR" as const),
-    fastEma,
-    slowEma,
-    separationPercent
-  };
-}
-
-function computeRsiSeries(candles: OhlcCandle[], period = 14) {
-  if (candles.length === 0) return [] as number[];
-  const closes = closeSeries(candles);
-  const gains: number[] = [];
-  const losses: number[] = [];
-
-  for (let index = 1; index < closes.length; index += 1) {
-    const delta = closes[index] - closes[index - 1];
-    gains.push(Math.max(delta, 0));
-    losses.push(Math.max(-delta, 0));
-  }
-
-  const series = Array.from({ length: closes.length }, () => 50);
-  if (gains.length < period) return series;
-
-  let averageGain = average(gains.slice(0, period));
-  let averageLoss = average(losses.slice(0, period));
-  const firstRs = averageLoss === 0 ? Number.POSITIVE_INFINITY : averageGain / averageLoss;
-  series[period] = averageLoss === 0 ? 100 : 100 - (100 / (1 + firstRs));
-
-  for (let index = period; index < gains.length; index += 1) {
-    averageGain = ((averageGain * (period - 1)) + gains[index]) / period;
-    averageLoss = ((averageLoss * (period - 1)) + losses[index]) / period;
-    const rs = averageLoss === 0 ? Number.POSITIVE_INFINITY : averageGain / averageLoss;
-    series[index + 1] = averageLoss === 0 ? 100 : 100 - (100 / (1 + rs));
-  }
-
-  return series.map((value) => round(value, 2));
-}
-
-function computeBollingerSeries(candles: OhlcCandle[], period = 20, deviationMultiplier = 2) {
-  const closes = closeSeries(candles);
-  return candles.map((_, index) => {
-    const window = closes.slice(Math.max(0, index - period + 1), index + 1);
-    const middle = average(window);
-    const deviation = standardDeviation(window);
-    const upper = middle + deviationMultiplier * deviation;
-    const lower = middle - deviationMultiplier * deviation;
-    const widthPercent = middle === 0 ? 0 : ((upper - lower) / middle) * 100;
-    return { upper, middle, lower, widthPercent };
-  });
-}
-
-function computeBollingerWidthPercentile(candles: OhlcCandle[], period = 20, lookback = 50) {
-  const series = computeBollingerSeries(candles, period);
-  const widths = lastN(series.map((item) => item.widthPercent), lookback);
-  if (widths.length === 0) return 0.5;
-  const latest = widths[widths.length - 1];
-  const minimum = Math.min(...widths);
-  const maximum = Math.max(...widths);
-  if (maximum - minimum <= 0.0001) return 0.5;
-  return (latest - minimum) / (maximum - minimum);
-}
-
-function candleRangePercent(candle: OhlcCandle) {
-  return candle.close === 0 ? 0 : ((candle.high - candle.low) / candle.close) * 100;
-}
-
-function recentMovePercent(candles: OhlcCandle[], candleCount: number) {
-  if (candles.length <= candleCount) return 0;
-  const latest = candles[candles.length - 1].close;
-  const baseline = candles[Math.max(candles.length - 1 - candleCount, 0)].close;
-  return baseline === 0 ? 0 : Math.abs((latest - baseline) / baseline) * 100;
-}
-
-function candleBodySize(candle: OhlcCandle) {
-  return Math.abs(candle.close - candle.open);
-}
-
-function candleUpperWick(candle: OhlcCandle) {
-  return candle.high - Math.max(candle.open, candle.close);
-}
-
-function candleLowerWick(candle: OhlcCandle) {
-  return Math.min(candle.open, candle.close) - candle.low;
-}
-
-function isDojiOrSpinningTop(candle: OhlcCandle) {
-  const range = Math.max(candle.high - candle.low, 0.0001);
-  const body = candleBodySize(candle);
-  const upper = candleUpperWick(candle);
-  const lower = candleLowerWick(candle);
-  const bodyRatio = body / range;
-  return bodyRatio <= 0.2 || (bodyRatio <= 0.35 && upper > body * 0.9 && lower > body * 0.9);
-}
-
-function hasAlternatingChop(candles: OhlcCandle[]) {
-  const recent = lastN(candles, 3);
-  if (recent.length < 3) return false;
-  const directions = recent.map((candle) => (candle.close >= candle.open ? 1 : -1));
-  const bodies = recent.map((candle) => Math.max(candleBodySize(candle), 0.0001));
-  const alternating = directions[0] !== directions[1] && directions[1] !== directions[2] && directions[0] === directions[2];
-  const bodyMean = average(bodies);
-  const similarBodies = bodies.every((body) => body / bodyMean >= 0.7 && body / bodyMean <= 1.3);
-  return alternating && similarBodies;
-}
-
-function latestVolumeRatio(candles: OhlcCandle[], period = 20) {
-  if (candles.length < 2) return 0;
-  const latest = candles[candles.length - 1].volume;
-  const baseline = average(lastN(candles.slice(0, -1).map((candle) => candle.volume), Math.min(period, candles.length - 1)));
-  return baseline <= 0 ? 0 : latest / baseline;
-}
-
-function computeSeriesEma(values: number[], period: number) {
-  if (values.length === 0) return [] as number[];
-  const smoothing = 2 / (period + 1);
-  let ema = values[0] ?? 0;
-  return values.map((value, index) => {
-    if (index === 0) {
-      ema = value;
-    } else {
-      ema = (value * smoothing) + (ema * (1 - smoothing));
-    }
-    return ema;
-  });
-}
-
-function computeMacdHistogramSeries(candles: OhlcCandle[], fast = 12, slow = 26, signal = 9) {
-  const closes = closeSeries(candles);
-  if (closes.length === 0) return [] as number[];
-  const fastSeries = computeSeriesEma(closes, fast);
-  const slowSeries = computeSeriesEma(closes, slow);
-  const macdSeries = closes.map((_, index) => fastSeries[index] - slowSeries[index]);
-  const signalSeries = computeSeriesEma(macdSeries, signal);
-  return macdSeries.map((value, index) => round(value - signalSeries[index], 6));
-}
-
-function computeAtrPercentSeries(candles: OhlcCandle[], period = 14) {
-  if (candles.length < 2) return candles.map(() => 0);
-  const trueRanges = candles.map((candle, index) => {
-    if (index === 0) return candle.high - candle.low;
-    const previousClose = candles[index - 1].close;
-    return Math.max(
-      candle.high - candle.low,
-      Math.abs(candle.high - previousClose),
-      Math.abs(candle.low - previousClose)
-    );
-  });
-
-  return candles.map((candle, index) => {
-    const start = Math.max(0, index - period + 1);
-    const atr = average(trueRanges.slice(start, index + 1));
-    return candle.close === 0 ? 0 : (atr / candle.close) * 100;
-  });
-}
-
-function candleBodyRatio(candle: OhlcCandle) {
-  const total = Math.max(candle.high - candle.low, 0.0001);
-  return candleBodySize(candle) / total;
-}
-
-function maxWickToBodyRatio(candle: OhlcCandle) {
-  const body = Math.max(candleBodySize(candle), 0.0001);
-  return Math.max(candleUpperWick(candle), candleLowerWick(candle)) / body;
-}
-
-function windowPercentileAtIndex(values: number[], index: number, lookback: number) {
-  const window = values.slice(Math.max(0, index - lookback + 1), index + 1);
-  if (window.length === 0) return 0.5;
-  const latest = window[window.length - 1] ?? 0;
-  const minimum = Math.min(...window);
-  const maximum = Math.max(...window);
-  if (maximum - minimum <= 0.000001) return 0.5;
-  return (latest - minimum) / (maximum - minimum);
-}
-
-function estimateDailyVolumeUsd(candles: OhlcCandle[], periodsPerDay = 96) {
-  const window = lastN(candles, Math.min(periodsPerDay, candles.length));
-  return window.reduce((sum, candle) => sum + (candle.close * candle.volume), 0);
-}
-
-function isAltcoinSymbol(symbol: string) {
-  const normalized = symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-  return !["BTCUSD", "XBTUSD", "ETHUSD"].includes(normalized);
-}
-
-function breakReclaimCount(candles: OhlcCandle[], level: number) {
-  const closes = candles.map((candle) => candle.close);
-  if (closes.length < 3) return 0;
-  let flips = 0;
-  let previousState = closes[0] >= level ? 1 : -1;
-  for (let index = 1; index < closes.length; index += 1) {
-    const state = closes[index] >= level ? 1 : -1;
-    if (state !== previousState) {
-      flips += 1;
-      previousState = state;
-    }
-  }
-  return Math.floor(flips / 2);
-}
-
-function wickManipulationCheck(candle: OhlcCandle, side: "LONG" | "SHORT", lowerBand: number, upperBand: number) {
-  const body = Math.max(candleBodySize(candle), 0.0001);
-  const lowerWick = candleLowerWick(candle);
-  const upperWick = candleUpperWick(candle);
-
-  if (side === "LONG") {
-    if (lowerWick <= body * 2) {
-      return { skip: false, liquidityGrab: false, ratio: round(lowerWick / body, 2) };
-    }
-    const closesBackInside = candle.close >= lowerBand;
-    return {
-      skip: !closesBackInside,
-      liquidityGrab: candle.low < lowerBand && closesBackInside,
-      ratio: round(lowerWick / body, 2)
-    };
-  }
-
-  if (upperWick <= body * 2) {
-    return { skip: false, liquidityGrab: false, ratio: round(upperWick / body, 2) };
-  }
-  const closesBackInside = candle.close <= upperBand;
-  return {
-    skip: !closesBackInside,
-    liquidityGrab: candle.high > upperBand && closesBackInside,
-    ratio: round(upperWick / body, 2)
-  };
-}
-
-function kellySizeMultiplier(confidence: number) {
-  const payoutOdds = 3;
-  const lossProbability = 1 - confidence;
-  const rawKelly = Math.max(((payoutOdds * confidence) - lossProbability) / payoutOdds, 0);
-  const conservativeKelly = Math.min(rawKelly * 0.2, 0.2);
-  return clamp(conservativeKelly / 0.2, 0.45, 1);
 }
 
 function computeTrendPercent(candles: OhlcCandle[], fastPeriod: number, slowPeriod: number) {
@@ -2074,7 +1813,7 @@ function createInitialSnapshot(): ProofTraderSnapshot {
   snapshot.positions = [];
   snapshot.strategy = {
     ...snapshot.strategy,
-    selectedStrategy: "Hybrid Continuation + Breakout Execution",
+    selectedStrategy: "AI Regime & Execution Strategist",
     currentMode: "AI Awaiting Candidates",
     marketRegime: "AI Warmup",
     readiness: "Awaiting AI market features",
@@ -2086,15 +1825,15 @@ function createInitialSnapshot(): ProofTraderSnapshot {
     aiCommentary: [],
     allowedSymbols: [...snapshot.risk.policy.whitelistedMarkets],
     entryRules: [
-      "The hybrid engine runs two bounded modules: a trend pullback continuation module for higher-frequency quality setups and a breakout retest module for larger expansion opportunities.",
-      "Trend pullback setups require aligned EMA structure, a controlled pullback into value, RSI and MACD recovery, volume confirmation, and clean execution conditions before entry.",
-      "Breakout setups still require compression, a decisive range break, and a confirmed retest on lighter volume so the bot does not chase extended candles.",
-      "Thin pairs, extended four-hour moves, fake breakouts, BTC risk-off pressure, choppy tape, and concentration limits are all automatic no-trade conditions."
+      "AI ranks only bounded candidates from trend continuation, breakout expansion, and mean reversion modules.",
+      "The feature engine reads M15 / M30 structure bias, daily open, Asian session range, M15 order blocks, M1 / M3 MSS displacement, volume expansion, FVG quality, and order-book execution quality before a candidate is born.",
+      "Every candidate must clear the hard confidence threshold and professional execution filters for spread, depth, and correlated exposure.",
+      "Only one open position per watched symbol is allowed and same-side correlated stacking is capped."
     ],
     exitRules: [
-      "Trend pullback trades use ATR-aware stops beyond the reclaim structure and target roughly 2.4R, while breakout retest trades target roughly 3R with optional manual runner management.",
-      "AI can rank approved candidates but may not bypass module-specific confirmation rules, volatility guards, portfolio concentration checks, or hard risk controls.",
-      "Trade sizing uses a conservative capped Kelly-style multiplier, with max per-trade risk limited by the portfolio risk budget and bucket exposure pressure.",
+      "Every executed trade receives ATR-aware bounded stop-loss and take-profit percentages before order submission.",
+      "AI tunes the execution envelope inside hard limits and the risk engine enforces it deterministically.",
+      "Daily trade caps, drawdown control, correlated exposure limits, and cooldown after loss streaks can block fresh entries.",
       "Open positions are re-marked from live prices during paper sync cycles and futures defense can automatically trim or close stressed exposure."
     ],
     executionPolicy: "AI selects the module and candidate. The risk engine enforces volatility, spread, depth, exposure, and portfolio-allocation filters. Kraken CLI executes.",
@@ -2295,11 +2034,6 @@ function buildPerformanceSnapshot(curve: Array<{ date: string; value: number }>)
 class StateStore {
   private workspaceId: string | null = null;
   private priceMemory = new Map<string, number[]>();
-  private btcExecutionGuard = {
-    sharpDownTwoCandles: false,
-    dumpedThirtyMinutes: false,
-    trend15mPercent: 0
-  };
 
   private async ensureWorkspace() {
     if (this.workspaceId) {
@@ -2559,39 +2293,13 @@ class StateStore {
       positionExitEngine: snapshot.strategy.ai?.positionExitEngine ?? null,
       portfolioAllocation: snapshot.strategy.ai?.portfolioAllocation ?? null
     };
-    snapshot.strategy.selectedStrategy = "Hybrid Continuation + Breakout Execution";
+    snapshot.strategy.selectedStrategy = "AI Regime & Execution Strategist";
   }
 
   private rememberPrice(symbol: string, price: number) {
     const history = [...(this.priceMemory.get(symbol) ?? []), price].slice(-12);
     this.priceMemory.set(symbol, history);
     return history;
-  }
-
-
-  private async fetchBtcMacroRegime() {
-    try {
-      const [payload4h, payload15m] = await Promise.all([
-        krakenCliService.ohlc("XBTUSD", 240),
-        krakenCliService.ohlc("XBTUSD", 15)
-      ]);
-      const candles4h = krakenCliService.extractOhlcRows(payload4h);
-      const candles15m = krakenCliService.extractOhlcRows(payload15m);
-      const trend15mPercent = round(computeMomentumPercent(candles15m, 2), 3);
-      this.btcExecutionGuard = {
-        sharpDownTwoCandles: trend15mPercent <= -1,
-        dumpedThirtyMinutes: trend15mPercent <= -1.5,
-        trend15mPercent
-      };
-      return classifyEmaRegime(candles4h, 50, 200).regime;
-    } catch {
-      this.btcExecutionGuard = {
-        sharpDownTwoCandles: false,
-        dumpedThirtyMinutes: false,
-        trend15mPercent: 0
-      };
-      return "NEUTRAL" as const;
-    }
   }
 
   private buildMarketContext(
@@ -2721,54 +2429,27 @@ class StateStore {
     return context;
   }
 
-  private buildExecutionAwareCandidates(symbol: string, context: MarketContext, btcMacroRegime: "BULL" | "BEAR" | "NEUTRAL"): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
+  private buildExecutionAwareCandidates(symbol: string, context: MarketContext): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
     const candidates: StrategyCandidate[] = [];
-    const candles = context.candles15m;
-    const latestCandle = candles[candles.length - 1];
-    const latestIndex = candles.length - 1;
-    const closes15m = closeSeries(candles);
-    const closes1h = closeSeries(context.candles1h);
-    const bollingerSeries = computeBollingerSeries(candles, 20, 2);
-    const rsiSeries = computeRsiSeries(candles, 14);
-    const macdHistogramSeries = computeMacdHistogramSeries(candles);
-    const atrSeries = computeAtrPercentSeries(candles, 14);
-    const latestAtrPercent = Math.max(atrSeries[latestIndex] ?? context.atr15mPercent, 0.3);
-    const dailyVolumeUsd = estimateDailyVolumeUsd(candles);
-    const fourHourMovePercent = Math.abs(computeMomentumPercent(candles, 16));
-    const latestVolumeRatioValue = latestVolumeRatio(candles, 20);
-    const isAltcoin = isAltcoinSymbol(symbol);
-    const btcSafe = !this.btcExecutionGuard.dumpedThirtyMinutes;
-    const altcoinLongSafe = !(isAltcoin && this.btcExecutionGuard.sharpDownTwoCandles);
-    const spreadPenalty = Math.max(0, context.spreadBps - 10) * 0.006;
-    const liquidityBoost = clamp(context.liquidityUsd / 500000, 0, 1) * 0.04;
-    const executionBoost = clamp(context.executionQuality, 0.4, 0.98) * 0.05;
-    const regimeSummary = `BTC macro ${btcMacroRegime} / BTC 15m ${this.btcExecutionGuard.trend15mPercent.toFixed(2)}% / ${symbol}`;
-    const ema15Fast = exponentialMovingAverage(closes15m, 20);
-    const ema15Slow = exponentialMovingAverage(closes15m, 50);
-    const ema1hFast = exponentialMovingAverage(closes1h, 20);
-    const ema1hSlow = exponentialMovingAverage(closes1h, 50);
-    const pairTrendRegime = classifyEmaRegime(context.candles1h, 20, 50, 0.2).regime;
-    const recentAtrWindow = atrSeries.slice(Math.max(0, latestIndex - 5), latestIndex + 1);
-    const atrStable = recentAtrWindow.length >= 3 && (recentAtrWindow[recentAtrWindow.length - 1] ?? latestAtrPercent) <= Math.max(...recentAtrWindow) * 1.15;
+    const atrPercent = Math.max(context.atr15mPercent || context.atr5mPercent, 0.45);
+    const spreadPenalty = Math.max(0, context.spreadBps - 5) * 0.006;
+    const liquidityBoost = clamp(context.liquidityUsd / 225000, 0, 1) * 0.08;
 
     const addCandidate = (candidate: Omit<StrategyCandidate, "id" | "symbol" | "price">) => {
-      if (candidate.confidence < 0.7) {
-        return;
-      }
       candidates.push({
         id: generateId("CAND"),
         symbol,
         price: context.price,
         ...candidate,
-        confidence: round(clamp(candidate.confidence, 0.5, 0.97), 2),
+        confidence: round(clamp(candidate.confidence, 0.5, 0.95), 2),
         momentumPercent: round(candidate.momentumPercent, 3),
         mediumMomentumPercent: round(candidate.mediumMomentumPercent, 3),
         spreadPercent: round(candidate.spreadPercent, 4),
         volatilityPercent: round(candidate.volatilityPercent, 3),
         rangePosition: round(candidate.rangePosition, 3),
-        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.45, 6.5), 2),
-        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.4, 18), 2),
-        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.45, 1), 2),
+        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, 2.2), 2),
+        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, 4.5), 2),
+        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.55, 1.25), 2),
         atrPercent: round(candidate.atrPercent, 3),
         trend1hPercent: round(candidate.trend1hPercent, 3),
         trend15mPercent: round(candidate.trend15mPercent, 3),
@@ -2779,263 +2460,404 @@ class StateStore {
       });
     };
 
-    const evaluateBreakoutSide = (side: "LONG" | "SHORT") => {
-      for (let breakoutIndex = Math.max(20, latestIndex - 4); breakoutIndex <= latestIndex - 1; breakoutIndex += 1) {
-        const rangeWindow = candles.slice(Math.max(0, breakoutIndex - 10), breakoutIndex);
-        if (rangeWindow.length < 10) {
-          continue;
-        }
+    const bullishAlignment = context.trend1hPercent > 0.18 && context.trend15mPercent > 0.08;
+    const bearishAlignment = context.trend1hPercent < -0.18 && context.trend15mPercent < -0.08;
+    const rangeFriendly = context.regime === "Range" || (Math.abs(context.trend1hPercent) < 0.18 && Math.abs(context.trend15mPercent) < 0.14);
 
-        const rangeHigh = Math.max(...rangeWindow.map((candle) => candle.close));
-        const rangeLow = Math.min(...rangeWindow.map((candle) => candle.close));
-        const midpoint = (rangeHigh + rangeLow) / 2;
-        const rangeHeightPercent = midpoint === 0 ? 0 : ((rangeHigh - rangeLow) / midpoint) * 100;
-        const breakoutCandle = candles[breakoutIndex];
-        const breakoutBands = bollingerSeries[breakoutIndex];
-        const breakoutBodyRatio = candleBodyRatio(breakoutCandle);
-        const breakoutWickRatio = maxWickToBodyRatio(breakoutCandle);
-        const compressionPercentile = windowPercentileAtIndex(bollingerSeries.map((item) => item.widthPercent), Math.max(breakoutIndex - 1, 0), 50);
-        const insideBandWindow = candles.slice(Math.max(0, breakoutIndex - 4), breakoutIndex);
-        const insideBands = insideBandWindow.length >= 4 && insideBandWindow.every((candle, index) => {
-          const band = bollingerSeries[Math.max(0, breakoutIndex - 4) + index];
-          return candle.high < band.upper && candle.low > band.lower;
-        });
-        const atrLookback = atrSeries.slice(Math.max(0, breakoutIndex - 6), breakoutIndex);
-        const atrFlatOrDeclining = atrLookback.length >= 6
-          && (atrLookback[atrLookback.length - 1] ?? 0) <= Math.max(...atrLookback) * 1.06
-          && (atrLookback[atrLookback.length - 1] ?? 0) <= (atrLookback[0] ?? 0) * 1.04;
-        const compressionConfirmed = compressionPercentile <= 0.3 && insideBands && atrFlatOrDeclining;
-        const breakoutVolumeBaseline = Math.max(average(candles.slice(Math.max(0, breakoutIndex - 20), breakoutIndex).map((candle) => candle.volume)), 0.0001);
-        const breakoutVolumeRatio = breakoutCandle.volume / breakoutVolumeBaseline;
-        const breakoutRsi = rsiSeries[breakoutIndex] ?? 50;
-        const previousBreakoutRsi = rsiSeries[Math.max(0, breakoutIndex - 1)] ?? breakoutRsi;
-        const breakoutMacd = macdHistogramSeries[breakoutIndex] ?? 0;
-        const previousBreakoutMacd = macdHistogramSeries[Math.max(0, breakoutIndex - 1)] ?? breakoutMacd;
-        const recentReclaimCount = breakReclaimCount(candles.slice(Math.max(0, breakoutIndex - 20), breakoutIndex), side === "LONG" ? rangeHigh : rangeLow);
-        const preBreakoutWidths = bollingerSeries.slice(Math.max(0, breakoutIndex - 4), breakoutIndex).map((item) => item.widthPercent);
-        const preBreakoutAverageWidth = Math.max(average(preBreakoutWidths), 0.0001);
-        const preBreakoutExpansion = (breakoutBands?.widthPercent ?? 0) > preBreakoutAverageWidth * 1.28 && compressionPercentile > 0.38;
-        const retestWindowOpen = latestIndex > breakoutIndex && latestIndex - breakoutIndex <= 4;
-        const atrAbsolute = breakoutCandle.close * (latestAtrPercent / 100);
-        const levelTolerance = Math.max(atrAbsolute * 0.35, breakoutCandle.close * 0.0012);
-        const breakoutValid = side === "LONG"
-          ? breakoutCandle.close > rangeHigh
-            && breakoutBodyRatio > 0.58
-            && breakoutVolumeRatio >= 1.8
-            && breakoutRsi > 54
-            && previousBreakoutRsi <= 54
-            && breakoutMacd > 0
-            && previousBreakoutMacd <= 0
-          : breakoutCandle.close < rangeLow
-            && breakoutBodyRatio > 0.58
-            && breakoutVolumeRatio >= 1.8
-            && breakoutRsi < 46
-            && previousBreakoutRsi >= 46
-            && breakoutMacd < 0
-            && previousBreakoutMacd >= 0;
-        const fakeBreakout = isDojiOrSpinningTop(breakoutCandle)
-          || breakoutWickRatio > 1.5
-          || (side === "LONG" ? breakoutRsi > 78 : breakoutRsi < 22)
-          || recentReclaimCount > 2
-          || preBreakoutExpansion
-          || !btcSafe
-          || dailyVolumeUsd < 5_000_000
-          || fourHourMovePercent > 8;
-        const latestVolumeLower = latestCandle.volume < breakoutCandle.volume;
-        const retestConfirmed = retestWindowOpen && (side === "LONG"
-          ? latestCandle.low <= rangeHigh + levelTolerance && latestCandle.close > rangeHigh && latestCandle.close > latestCandle.open
-          : latestCandle.high >= rangeLow - levelTolerance && latestCandle.close < rangeLow && latestCandle.close < latestCandle.open);
-        const retestFailed = retestWindowOpen && (side === "LONG" ? latestCandle.close <= rangeHigh : latestCandle.close >= rangeLow);
+    if (bullishAlignment && context.momentum5mPercent > -0.18 && context.rangePosition5m >= 0.28 && context.executionQuality >= 0.48) {
+      const confidence = 0.58 + Math.abs(context.trend1hPercent) * 0.12 + Math.abs(context.trend15mPercent) * 0.25 + context.executionQuality * 0.16 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(atrPercent * 1.15, 0.72), 0.72, 2.1);
+      addCandidate({
+        action: "LONG",
+        confidence,
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
+        regime: context.regime,
+        summary: `Trend continuation long. 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, spread ${context.spreadBps.toFixed(1)} bps, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+        momentumPercent: context.momentum5mPercent,
+        mediumMomentumPercent: context.mediumMomentumPercent,
+        spreadPercent: context.spreadPercent,
+        volatilityPercent: context.realizedVolatilityPercent,
+        rangePosition: context.rangePosition5m,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: 0.95 + context.executionQuality * 0.18,
+        expectedHoldMinutes: 240,
+        atrPercent,
+        trend1hPercent: context.trend1hPercent,
+        trend15mPercent: context.trend15mPercent,
+        spreadBps: context.spreadBps,
+        bookImbalance: context.bookImbalance,
+        liquidityUsd: context.liquidityUsd,
+        executionQuality: context.executionQuality
+      });
+    }
 
-        if (!compressionConfirmed || rangeHeightPercent < 0.5 || rangeHeightPercent > 4.5 || !breakoutValid || fakeBreakout || !retestWindowOpen || retestFailed || !retestConfirmed || !latestVolumeLower) {
-          continue;
-        }
+    if (bearishAlignment && context.momentum5mPercent < 0.18 && context.rangePosition5m <= 0.72 && context.executionQuality >= 0.48) {
+      const confidence = 0.58 + Math.abs(context.trend1hPercent) * 0.12 + Math.abs(context.trend15mPercent) * 0.25 + context.executionQuality * 0.16 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(atrPercent * 1.15, 0.72), 0.72, 2.1);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
+        regime: context.regime,
+        summary: `Trend continuation short. 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, spread ${context.spreadBps.toFixed(1)} bps, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+        momentumPercent: context.momentum5mPercent,
+        mediumMomentumPercent: context.mediumMomentumPercent,
+        spreadPercent: context.spreadPercent,
+        volatilityPercent: context.realizedVolatilityPercent,
+        rangePosition: context.rangePosition5m,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: 0.95 + context.executionQuality * 0.18,
+        expectedHoldMinutes: 240,
+        atrPercent,
+        trend1hPercent: context.trend1hPercent,
+        trend15mPercent: context.trend15mPercent,
+        spreadBps: context.spreadBps,
+        bookImbalance: context.bookImbalance,
+        liquidityUsd: context.liquidityUsd,
+        executionQuality: context.executionQuality
+      });
+    }
 
-        if (side === "LONG" && !altcoinLongSafe) {
-          continue;
-        }
+    const breakoutLong = context.breakoutPressure > 0.72 && context.rangePosition5m > 0.82 && context.bookImbalance > -0.12 && context.executionQuality >= 0.55;
+    const breakoutShort = context.breakoutPressure > 0.72 && context.rangePosition5m < 0.18 && context.bookImbalance < 0.12 && context.executionQuality >= 0.55;
+    if (breakoutLong && context.regime !== "Risk Off") {
+      const confidence = 0.57 + context.breakoutPressure * 0.16 + Math.max(context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(context.atr5mPercent * 1.05, 0.62), 0.62, 1.7);
+      addCandidate({
+        action: "LONG",
+        confidence,
+        type: "BREAKOUT_EXPANSION",
+        module: "Breakout Expansion",
+        regime: context.regime,
+        summary: `Breakout expansion long. 5m range position ${context.rangePosition5m.toFixed(2)}, breakout pressure ${(context.breakoutPressure * 100).toFixed(0)}%, book imbalance ${context.bookImbalance.toFixed(2)}.`,
+        momentumPercent: context.momentum5mPercent,
+        mediumMomentumPercent: context.mediumMomentumPercent,
+        spreadPercent: context.spreadPercent,
+        volatilityPercent: context.realizedVolatilityPercent,
+        rangePosition: context.rangePosition5m,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.4,
+        sizeMultiplier: 0.9 + context.executionQuality * 0.2,
+        expectedHoldMinutes: 120,
+        atrPercent: context.atr5mPercent,
+        trend1hPercent: context.trend1hPercent,
+        trend15mPercent: context.trend15mPercent,
+        spreadBps: context.spreadBps,
+        bookImbalance: context.bookImbalance,
+        liquidityUsd: context.liquidityUsd,
+        executionQuality: context.executionQuality
+      });
+    }
+    if (breakoutShort && context.regime !== "Risk Off") {
+      const confidence = 0.57 + context.breakoutPressure * 0.16 + Math.max(-context.trend15mPercent, 0) * 0.18 + context.executionQuality * 0.14 + liquidityBoost - spreadPenalty;
+      const stopLossPercent = clamp(Math.max(context.atr5mPercent * 1.05, 0.62), 0.62, 1.7);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "BREAKOUT_EXPANSION",
+        module: "Breakout Expansion",
+        regime: context.regime,
+        summary: `Breakout expansion short. 5m range position ${context.rangePosition5m.toFixed(2)}, breakout pressure ${(context.breakoutPressure * 100).toFixed(0)}%, book imbalance ${context.bookImbalance.toFixed(2)}.`,
+        momentumPercent: context.momentum5mPercent,
+        mediumMomentumPercent: context.mediumMomentumPercent,
+        spreadPercent: context.spreadPercent,
+        volatilityPercent: context.realizedVolatilityPercent,
+        rangePosition: context.rangePosition5m,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.4,
+        sizeMultiplier: 0.9 + context.executionQuality * 0.2,
+        expectedHoldMinutes: 120,
+        atrPercent: context.atr5mPercent,
+        trend1hPercent: context.trend1hPercent,
+        trend15mPercent: context.trend15mPercent,
+        spreadBps: context.spreadBps,
+        bookImbalance: context.bookImbalance,
+        liquidityUsd: context.liquidityUsd,
+        executionQuality: context.executionQuality
+      });
+    }
 
-        const stopReference = side === "LONG"
-          ? latestCandle.low - (latestCandle.close * (latestAtrPercent / 100))
-          : latestCandle.high + (latestCandle.close * (latestAtrPercent / 100));
-        const stopLossPercent = Math.abs((latestCandle.close - stopReference) / latestCandle.close) * 100;
-        const takeProfitPercent = stopLossPercent * 3;
-        const compressionScore = clamp((0.3 - compressionPercentile) / 0.3, 0, 1);
-        const volumeScore = clamp((breakoutVolumeRatio - 1.8) / 2, 0, 1);
-        const bodyScore = clamp((breakoutBodyRatio - 0.58) / 0.42, 0, 1);
-        const rangeScore = clamp(1 - Math.abs(rangeHeightPercent - 1.8) / 2.2, 0, 1);
-        const retestScore = clamp(1 - (latestCandle.volume / Math.max(breakoutCandle.volume, 0.0001)), 0, 1);
-        const confidence = clamp(
-          0.68
-          + (compressionScore * 0.07)
-          + (volumeScore * 0.06)
-          + (bodyScore * 0.04)
-          + (rangeScore * 0.03)
-          + (retestScore * 0.05)
-          + executionBoost
-          + liquidityBoost
-          - spreadPenalty,
-          0.5,
-          0.97
-        );
-
-        const bucketPenalty = isAltcoin ? 0.75 : 1;
-        const sizeMultiplier = kellySizeMultiplier(confidence) * bucketPenalty;
-        const summary = `${side === "LONG" ? "Bullish" : "Bearish"} breakout retest. Compression held for the pre-breakout range, the breakout candle closed outside the ${side === "LONG" ? "range high" : "range low"} with ${breakoutVolumeRatio.toFixed(2)}x volume, RSI and MACD confirmed, and the latest retest candle held the broken level on quieter volume. Primary take-profit is modeled at 3R while a cleaner runner can be managed manually if momentum persists.`;
-
+    if (rangeFriendly && context.executionQuality >= 0.5 && context.spreadBps <= 12) {
+      if (context.meanReversionStretch <= -0.95 && context.rangePosition5m < 0.24) {
+        const confidence = 0.55 + Math.min(Math.abs(context.meanReversionStretch) * 0.08, 0.16) + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
+        const stopLossPercent = clamp(Math.max(context.atr5mPercent * 0.9, 0.58), 0.58, 1.25);
         addCandidate({
-          action: side,
+          action: "LONG",
           confidence,
-          type: "BREAKOUT_RETEST",
-          module: "Breakout Retest",
-          regime: regimeSummary,
-          summary,
-          momentumPercent: side === "LONG" ? Math.max(context.momentum5mPercent, 0) : Math.min(context.momentum5mPercent, 0),
-          mediumMomentumPercent: side === "LONG" ? Math.max(context.mediumMomentumPercent, 0) : Math.min(context.mediumMomentumPercent, 0),
+          type: "MEAN_REVERSION",
+          module: "Mean Reversion",
+          regime: context.regime,
+          summary: `Mean reversion long. Stretch ${context.meanReversionStretch.toFixed(2)}σ, range position ${context.rangePosition5m.toFixed(2)}, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+          momentumPercent: context.momentum5mPercent,
+          mediumMomentumPercent: context.mediumMomentumPercent,
           spreadPercent: context.spreadPercent,
           volatilityPercent: context.realizedVolatilityPercent,
-          rangePosition: side === "LONG" ? 1 : 0,
+          rangePosition: context.rangePosition5m,
           stopLossPercent,
-          takeProfitPercent,
-          sizeMultiplier,
-          expectedHoldMinutes: 240,
-          atrPercent: latestAtrPercent,
-          trend1hPercent: rangeHeightPercent,
-          trend15mPercent: side === "LONG" ? breakoutRsi : 100 - breakoutRsi,
+          takeProfitPercent: stopLossPercent * 1.7,
+          sizeMultiplier: 0.7 + context.executionQuality * 0.12,
+          expectedHoldMinutes: 75,
+          atrPercent: context.atr5mPercent,
+          trend1hPercent: context.trend1hPercent,
+          trend15mPercent: context.trend15mPercent,
           spreadBps: context.spreadBps,
           bookImbalance: context.bookImbalance,
           liquidityUsd: context.liquidityUsd,
           executionQuality: context.executionQuality
         });
       }
-    };
-
-    const evaluatePullbackSide = (side: "LONG" | "SHORT") => {
-      if (latestIndex < 10) {
-        return;
+      if (context.meanReversionStretch >= 0.95 && context.rangePosition5m > 0.76) {
+        const confidence = 0.55 + Math.min(Math.abs(context.meanReversionStretch) * 0.08, 0.16) + context.executionQuality * 0.12 + liquidityBoost - spreadPenalty;
+        const stopLossPercent = clamp(Math.max(context.atr5mPercent * 0.9, 0.58), 0.58, 1.25);
+        addCandidate({
+          action: "SHORT",
+          confidence,
+          type: "MEAN_REVERSION",
+          module: "Mean Reversion",
+          regime: context.regime,
+          summary: `Mean reversion short. Stretch ${context.meanReversionStretch.toFixed(2)}σ, range position ${context.rangePosition5m.toFixed(2)}, execution quality ${(context.executionQuality * 100).toFixed(0)}%.`,
+          momentumPercent: context.momentum5mPercent,
+          mediumMomentumPercent: context.mediumMomentumPercent,
+          spreadPercent: context.spreadPercent,
+          volatilityPercent: context.realizedVolatilityPercent,
+          rangePosition: context.rangePosition5m,
+          stopLossPercent,
+          takeProfitPercent: stopLossPercent * 1.7,
+          sizeMultiplier: 0.7 + context.executionQuality * 0.12,
+          expectedHoldMinutes: 75,
+          atrPercent: context.atr5mPercent,
+          trend1hPercent: context.trend1hPercent,
+          trend15mPercent: context.trend15mPercent,
+          spreadBps: context.spreadBps,
+          bookImbalance: context.bookImbalance,
+          liquidityUsd: context.liquidityUsd,
+          executionQuality: context.executionQuality
+        });
       }
-
-      const recentWindow = candles.slice(Math.max(0, latestIndex - 4), latestIndex + 1);
-      const priorWindow = candles.slice(Math.max(0, latestIndex - 8), latestIndex);
-      const latestRsi = rsiSeries[latestIndex] ?? 50;
-      const previousRsi = rsiSeries[Math.max(0, latestIndex - 1)] ?? latestRsi;
-      const recentRsiWindow = rsiSeries.slice(Math.max(0, latestIndex - 4), latestIndex + 1);
-      const latestMacd = macdHistogramSeries[latestIndex] ?? 0;
-      const previousMacd = macdHistogramSeries[Math.max(0, latestIndex - 1)] ?? latestMacd;
-      const latestBand = bollingerSeries[latestIndex];
-      const recentBandWindow = bollingerSeries.slice(Math.max(0, latestIndex - 4), latestIndex + 1);
-      const rangePercentNow = candleRangePercent(latestCandle);
-      const fastSlowSpread15m = ema15Slow === 0 ? 0 : ((ema15Fast - ema15Slow) / ema15Slow) * 100;
-      const fastSlowSpread1h = ema1hSlow === 0 ? 0 : ((ema1hFast - ema1hSlow) / ema1hSlow) * 100;
-      const recentPullbackLows = priorWindow.map((candle) => candle.low);
-      const recentPullbackHighs = priorWindow.map((candle) => candle.high);
-      const rangeBiasScore = side === "LONG"
-        ? clamp(1 - Math.abs(context.rangePosition15m - 0.58) / 0.42, 0, 1)
-        : clamp(1 - Math.abs(context.rangePosition15m - 0.42) / 0.42, 0, 1);
-      const touchEma = priorWindow.some((candle) => side === "LONG"
-        ? candle.low <= ema15Fast * 1.002 || candle.close <= ema15Fast * 1.001
-        : candle.high >= ema15Fast * 0.998 || candle.close >= ema15Fast * 0.999);
-      const touchBand = recentBandWindow.some((band, index) => {
-        const candle = recentWindow[index];
-        return side === "LONG" ? candle.low <= band.middle : candle.high >= band.middle;
-      });
-      const trendAligned = side === "LONG"
-        ? ema15Fast > ema15Slow && ema1hFast > ema1hSlow && latestCandle.close >= ema15Fast
-        : ema15Fast < ema15Slow && ema1hFast < ema1hSlow && latestCandle.close <= ema15Fast;
-      const recoveryConfirmed = side === "LONG"
-        ? latestCandle.close > latestCandle.open && latestCandle.close >= ema15Fast && latestCandle.close >= (candles[Math.max(0, latestIndex - 1)]?.high ?? latestCandle.close * 0.999)
-        : latestCandle.close < latestCandle.open && latestCandle.close <= ema15Fast && latestCandle.close <= (candles[Math.max(0, latestIndex - 1)]?.low ?? latestCandle.close * 1.001);
-      const rsiRecovered = side === "LONG"
-        ? Math.min(...recentRsiWindow) <= 48 && previousRsi <= latestRsi && latestRsi >= 50 && latestRsi <= 68
-        : Math.max(...recentRsiWindow) >= 52 && previousRsi >= latestRsi && latestRsi <= 50 && latestRsi >= 32;
-      const macdConfirmed = side === "LONG"
-        ? latestMacd >= previousMacd && latestMacd > -0.03
-        : latestMacd <= previousMacd && latestMacd < 0.03;
-      const volumeConfirmed = latestVolumeRatioValue >= 1.05;
-      const cleanCandle = !isDojiOrSpinningTop(latestCandle) && maxWickToBodyRatio(latestCandle) <= 2.2;
-      const noChop = !hasAlternatingChop(recentWindow);
-      const notExtended = recentMovePercent(candles, 2) <= 1.25 && rangePercentNow <= latestAtrPercent * 2.2;
-      const macroSupports = side === "LONG" ? btcMacroRegime !== "BEAR" : btcMacroRegime !== "BULL";
-      const altcoinSafety = side === "LONG" ? altcoinLongSafe : btcSafe;
-      if (!trendAligned || !macroSupports || !altcoinSafety || !touchEma || !touchBand || !recoveryConfirmed || !rsiRecovered || !macdConfirmed || !volumeConfirmed || !cleanCandle || !noChop || !notExtended || !atrStable || dailyVolumeUsd < 5_000_000 || fourHourMovePercent > 8) {
-        return;
-      }
-
-      const structureExtreme = side === "LONG"
-        ? Math.min(...(recentPullbackLows.length ? recentPullbackLows : [latestCandle.low]))
-        : Math.max(...(recentPullbackHighs.length ? recentPullbackHighs : [latestCandle.high]));
-      const structureStopDistance = side === "LONG"
-        ? ((latestCandle.close - structureExtreme) / latestCandle.close) * 100
-        : ((structureExtreme - latestCandle.close) / latestCandle.close) * 100;
-      const stopLossPercent = Math.max(latestAtrPercent * 1.35, structureStopDistance + 0.12);
-      const takeProfitPercent = stopLossPercent * 2.4;
-      const trendScore = side === "LONG"
-        ? clamp((fastSlowSpread15m * 2) + (fastSlowSpread1h * 1.4), 0, 1)
-        : clamp((Math.abs(fastSlowSpread15m) * 2) + (Math.abs(fastSlowSpread1h) * 1.4), 0, 1);
-      const rsiScore = side === "LONG"
-        ? clamp((latestRsi - 50) / 15, 0, 1)
-        : clamp((50 - latestRsi) / 15, 0, 1);
-      const volumeScore = clamp((latestVolumeRatioValue - 1.05) / 0.8, 0, 1);
-      const confidence = clamp(
-        0.67
-        + (trendScore * 0.07)
-        + (rsiScore * 0.05)
-        + (volumeScore * 0.04)
-        + (rangeBiasScore * 0.03)
-        + executionBoost
-        + liquidityBoost
-        - spreadPenalty,
-        0.5,
-        0.96
-      );
-      const bucketPenalty = isAltcoin ? 0.82 : 1;
-      const sizeMultiplier = kellySizeMultiplier(confidence) * bucketPenalty;
-      const summary = `${side === "LONG" ? "Bullish" : "Bearish"} trend pullback continuation. Higher-timeframe EMA structure stayed aligned, price pulled back into the fast trend value area, RSI mean reversion reset, volume returned on the reclaim candle, and the move regained directional control without chasing an overextended breakout.`;
-
-      addCandidate({
-        action: side,
-        confidence,
-        type: "TREND_PULLBACK_CONTINUATION",
-        module: "Trend Pullback",
-        regime: `${regimeSummary} / pair ${pairTrendRegime}`,
-        summary,
-        momentumPercent: context.momentum5mPercent,
-        mediumMomentumPercent: context.mediumMomentumPercent,
-        spreadPercent: context.spreadPercent,
-        volatilityPercent: context.realizedVolatilityPercent,
-        rangePosition: context.rangePosition15m,
-        stopLossPercent,
-        takeProfitPercent,
-        sizeMultiplier,
-        expectedHoldMinutes: 120,
-        atrPercent: latestAtrPercent,
-        trend1hPercent: side === "LONG" ? fastSlowSpread1h : -fastSlowSpread1h,
-        trend15mPercent: side === "LONG" ? fastSlowSpread15m : -fastSlowSpread15m,
-        spreadBps: context.spreadBps,
-        bookImbalance: context.bookImbalance,
-        liquidityUsd: context.liquidityUsd,
-        executionQuality: context.executionQuality
-      });
-    };
-
-    if (btcMacroRegime !== "BEAR") {
-      evaluatePullbackSide("LONG");
-      evaluateBreakoutSide("LONG");
-    } else {
-      evaluateBreakoutSide("LONG");
-    }
-
-    if (btcMacroRegime !== "BULL") {
-      evaluatePullbackSide("SHORT");
-      evaluateBreakoutSide("SHORT");
-    } else {
-      evaluateBreakoutSide("SHORT");
     }
 
     candidates.sort((left, right) => right.confidence - left.confidence);
     const lead = candidates[0] ?? null;
-    const compressionPercentileNow = computeBollingerWidthPercentile(candles, 20, 50);
-    const pullbackReadyNow = (ema15Fast > ema15Slow || ema15Fast < ema15Slow) && latestVolumeRatioValue >= 0.95 && !hasAlternatingChop(lastN(candles, 3));
+    const observation: StrategyObservation = lead ? {
+      action: lead.action,
+      type: lead.type,
+      confidence: lead.confidence,
+      summary: lead.summary,
+      regime: context.regime,
+      spreadPercent: lead.spreadPercent,
+      momentumPercent: lead.momentumPercent,
+      candidateCount: candidates.length,
+      executionQuality: context.executionQuality,
+      atrPercent: context.atr15mPercent
+    } : {
+      action: "HOLD",
+      type: "OBSERVATION",
+      confidence: round(clamp(0.5 + context.executionQuality * 0.18 - spreadPenalty, 0.5, 0.72), 2),
+      summary: `No bounded setup. Regime ${context.regime}, 1h trend ${context.trend1hPercent.toFixed(2)}%, 15m trend ${context.trend15mPercent.toFixed(2)}%, spread ${context.spreadBps.toFixed(1)} bps.`,
+      regime: context.regime,
+      spreadPercent: context.spreadPercent,
+      momentumPercent: context.momentum5mPercent,
+      candidateCount: 0,
+      executionQuality: context.executionQuality,
+      atrPercent: context.atr15mPercent
+    };
+
+    return { observation, candidates };
+  }
+
+  private buildStrategyCandidates(symbol: string, history: number[]): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
+    const latest = history[history.length - 1] ?? 0;
+    const fastWindow = history.slice(-3);
+    const mediumWindow = history.slice(-5);
+    const slowWindow = history.slice(-8);
+    const fastAverage = average(fastWindow.length > 0 ? fastWindow : history);
+    const mediumAverage = average(mediumWindow.length > 0 ? mediumWindow : history);
+    const slowAverage = average(slowWindow.length > 0 ? slowWindow : history);
+    const shortBaseline = history[Math.max(history.length - 4, 0)] ?? latest;
+    const mediumBaseline = history[Math.max(history.length - 7, 0)] ?? shortBaseline;
+    const momentumPercent = shortBaseline === 0 ? 0 : ((latest - shortBaseline) / shortBaseline) * 100;
+    const mediumMomentumPercent = mediumBaseline === 0 ? 0 : ((latest - mediumBaseline) / mediumBaseline) * 100;
+    const spreadPercent = slowAverage === 0 ? 0 : ((fastAverage - slowAverage) / slowAverage) * 100;
+    const returns = history.slice(1).map((price, index) => {
+      const base = history[index];
+      return base === 0 ? 0 : ((price - base) / base) * 100;
+    });
+    const volatilityPercent = standardDeviation(returns);
+    const rangeLow = history.length > 0 ? Math.min(...history) : latest;
+    const rangeHigh = history.length > 0 ? Math.max(...history) : latest;
+    const rangeSpan = rangeHigh - rangeLow;
+    const rangePosition = rangeSpan <= 0 ? 0.5 : (latest - rangeLow) / rangeSpan;
+    const pullbackPercent = fastAverage === 0 ? 0 : ((latest - fastAverage) / fastAverage) * 100;
+    const candidates: StrategyCandidate[] = [];
+
+    const addCandidate = (candidate: Omit<StrategyCandidate, "id" | "symbol" | "price" | "atrPercent" | "trend1hPercent" | "trend15mPercent" | "spreadBps" | "bookImbalance" | "liquidityUsd" | "executionQuality">) => {
+      candidates.push({
+        id: generateId("CAND"),
+        symbol,
+        price: latest,
+        ...candidate,
+        confidence: round(clamp(candidate.confidence, 0.5, 0.95), 2),
+        momentumPercent: round(candidate.momentumPercent, 3),
+        mediumMomentumPercent: round(candidate.mediumMomentumPercent, 3),
+        spreadPercent: round(candidate.spreadPercent, 3),
+        volatilityPercent: round(candidate.volatilityPercent, 3),
+        rangePosition: round(candidate.rangePosition, 3),
+        stopLossPercent: round(clamp(candidate.stopLossPercent, 0.6, 2.0), 2),
+        takeProfitPercent: round(clamp(candidate.takeProfitPercent, 1.2, 4.0), 2),
+        sizeMultiplier: round(clamp(candidate.sizeMultiplier, 0.6, 1.25), 2),
+        atrPercent: round(volatilityPercent, 3),
+        trend1hPercent: round(spreadPercent, 3),
+        trend15mPercent: round(mediumMomentumPercent, 3),
+        spreadBps: round(Math.abs(spreadPercent) * 100, 2),
+        bookImbalance: 0,
+        liquidityUsd: 0,
+        executionQuality: 0.45
+      });
+    };
+
+    const trendLong = fastAverage > mediumAverage && mediumAverage > slowAverage && mediumMomentumPercent > 0.12 && rangePosition > 0.32;
+    const trendShort = fastAverage < mediumAverage && mediumAverage < slowAverage && mediumMomentumPercent < -0.12 && rangePosition < 0.68;
+    const trendStrength = Math.abs(spreadPercent) + Math.abs(mediumMomentumPercent);
+    if (trendLong) {
+      const confidence = 0.55 + Math.abs(spreadPercent) * 0.8 + Math.abs(mediumMomentumPercent) * 0.28 - volatilityPercent * 0.05 + (pullbackPercent <= 0 ? 0.05 : 0);
+      const stopLossPercent = clamp(0.75 + volatilityPercent * 1.8, 0.7, 1.6);
+      addCandidate({
+        action: "LONG",
+        confidence,
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
+        regime: "Bull Trend",
+        summary: `Trend continuation long. Fast trend is above slow trend with ${mediumMomentumPercent.toFixed(2)}% medium momentum and ${spreadPercent.toFixed(2)}% spread alignment.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: pullbackPercent <= 0 ? 1.05 : 0.95,
+        expectedHoldMinutes: 180
+      });
+    }
+    if (trendShort) {
+      const confidence = 0.55 + Math.abs(spreadPercent) * 0.8 + Math.abs(mediumMomentumPercent) * 0.28 - volatilityPercent * 0.05 + (pullbackPercent >= 0 ? 0.05 : 0);
+      const stopLossPercent = clamp(0.75 + volatilityPercent * 1.8, 0.7, 1.6);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "TREND_CONTINUATION",
+        module: "Trend Continuation",
+        regime: "Bear Trend",
+        summary: `Trend continuation short. Fast trend is below slow trend with ${mediumMomentumPercent.toFixed(2)}% medium momentum and ${spreadPercent.toFixed(2)}% spread alignment.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.2,
+        sizeMultiplier: pullbackPercent >= 0 ? 1.05 : 0.95,
+        expectedHoldMinutes: 180
+      });
+    }
+
+    const breakoutLong = rangePosition > 0.84 && momentumPercent > 0.18 && spreadPercent > 0.05;
+    const breakoutShort = rangePosition < 0.16 && momentumPercent < -0.18 && spreadPercent < -0.05;
+    if (breakoutLong) {
+      const confidence = 0.54 + Math.abs(momentumPercent) * 0.35 + Math.abs(spreadPercent) * 0.75 + Math.max(rangePosition - 0.84, 0) * 0.2 - volatilityPercent * 0.03;
+      const stopLossPercent = clamp(0.65 + volatilityPercent * 1.3, 0.6, 1.3);
+      addCandidate({
+        action: "LONG",
+        confidence,
+        type: "BREAKOUT_EXPANSION",
+        module: "Breakout Expansion",
+        regime: "Risk On Breakout",
+        summary: `Breakout expansion long. Price is pressing the top of the recent range with ${momentumPercent.toFixed(2)}% short momentum.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.6,
+        sizeMultiplier: 1.1,
+        expectedHoldMinutes: 120
+      });
+    }
+    if (breakoutShort) {
+      const confidence = 0.54 + Math.abs(momentumPercent) * 0.35 + Math.abs(spreadPercent) * 0.75 + Math.max(0.16 - rangePosition, 0) * 0.2 - volatilityPercent * 0.03;
+      const stopLossPercent = clamp(0.65 + volatilityPercent * 1.3, 0.6, 1.3);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "BREAKOUT_EXPANSION",
+        module: "Breakout Expansion",
+        regime: "Risk Off Breakdown",
+        summary: `Breakout expansion short. Price is pressing the bottom of the recent range with ${momentumPercent.toFixed(2)}% short momentum.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 2.6,
+        sizeMultiplier: 1.1,
+        expectedHoldMinutes: 120
+      });
+    }
+
+    const rangeMarket = Math.abs(spreadPercent) < 0.22;
+    const meanReversionLong = rangeMarket && rangePosition < 0.18 && momentumPercent < -0.08;
+    const meanReversionShort = rangeMarket && rangePosition > 0.82 && momentumPercent > 0.08;
+    if (meanReversionLong) {
+      const confidence = 0.53 + Math.abs(momentumPercent) * 0.32 + Math.max(0.18 - rangePosition, 0) * 0.35 - volatilityPercent * 0.02;
+      const stopLossPercent = clamp(0.6 + volatilityPercent, 0.6, 1.0);
+      addCandidate({
+        action: "LONG",
+        confidence,
+        type: "MEAN_REVERSION",
+        module: "Mean Reversion",
+        regime: "Range Reversal",
+        summary: `Mean reversion long. Price is stretched into the lower end of the range while the broader spread remains contained.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 1.7,
+        sizeMultiplier: 0.8,
+        expectedHoldMinutes: 90
+      });
+    }
+    if (meanReversionShort) {
+      const confidence = 0.53 + Math.abs(momentumPercent) * 0.32 + Math.max(rangePosition - 0.82, 0) * 0.35 - volatilityPercent * 0.02;
+      const stopLossPercent = clamp(0.6 + volatilityPercent, 0.6, 1.0);
+      addCandidate({
+        action: "SHORT",
+        confidence,
+        type: "MEAN_REVERSION",
+        module: "Mean Reversion",
+        regime: "Range Reversal",
+        summary: `Mean reversion short. Price is stretched into the upper end of the range while the broader spread remains contained.`,
+        momentumPercent,
+        mediumMomentumPercent,
+        spreadPercent,
+        volatilityPercent,
+        rangePosition,
+        stopLossPercent,
+        takeProfitPercent: stopLossPercent * 1.7,
+        sizeMultiplier: 0.8,
+        expectedHoldMinutes: 90
+      });
+    }
+
+    candidates.sort((left, right) => right.confidence - left.confidence);
+    const lead = candidates[0] ?? null;
     const observation: StrategyObservation = lead
       ? {
           action: lead.action,
@@ -3045,89 +2867,29 @@ class StateStore {
           regime: lead.regime,
           spreadPercent: lead.spreadPercent,
           momentumPercent: lead.momentumPercent,
-          candidateCount: candidates.length,
-          executionQuality: lead.executionQuality,
-          atrPercent: lead.atrPercent
+          candidateCount: candidates.length
         }
       : {
           action: "HOLD",
-          type: "OBSERVATION",
-          confidence: 0.5,
-          summary: !btcSafe
-            ? `No trade. BTC sold off ${Math.abs(this.btcExecutionGuard.trend15mPercent).toFixed(2)}% over the last two 15m candles, so the hybrid engine stayed defensive.`
-            : dailyVolumeUsd < 5_000_000
-              ? `No trade. ${symbol} estimated 24h volume is below the 5M USD minimum for a clean intraday system.`
-              : fourHourMovePercent > 8
-                ? `No trade. ${symbol} already moved ${fourHourMovePercent.toFixed(2)}% over the last four hours, so both the pullback and breakout engines stayed patient.`
-                : compressionPercentileNow <= 0.3
-                  ? `No trade. Compression is present, but the breakout engine is still waiting for a decisive range break and quiet retest.`
-                  : pullbackReadyNow
-                    ? `No trade. Trend structure is present, but the pullback engine is waiting for a cleaner reclaim candle with stronger confirmation.`
-                    : `No trade. The hybrid engine is waiting for either a trend pullback reclaim or a breakout retest that clears the confidence gate.`,
-          regime: regimeSummary,
-          spreadPercent: context.spreadPercent,
-          momentumPercent: context.momentum5mPercent,
-          candidateCount: 0,
-          executionQuality: context.executionQuality,
-          atrPercent: latestAtrPercent
+          type: history.length < 5 ? "WARMUP" : "OBSERVATION",
+          confidence: round(clamp(0.5 + trendStrength * 0.08, 0.5, 0.72), 2),
+          summary: history.length < 5
+            ? `Warmup only. ${symbol} needs a few more data points before the AI engine can score bounded candidates.`
+            : `No bounded setup. Spread ${spreadPercent.toFixed(2)}%, short momentum ${momentumPercent.toFixed(2)}%, volatility ${volatilityPercent.toFixed(2)}%.`,
+          regime: history.length < 5 ? "Warmup" : rangeMarket ? "Range" : spreadPercent >= 0 ? "Uptrend Watch" : "Downtrend Watch",
+          spreadPercent: round(spreadPercent, 3),
+          momentumPercent: round(momentumPercent, 3),
+          candidateCount: 0
         };
 
     return { observation, candidates };
   }
 
-
-  private buildStrategyCandidates(symbol: string, history: number[]): { observation: StrategyObservation; candidates: StrategyCandidate[] } {
-    const latest = history[history.length - 1] ?? 0;
-    const shortBaseline = history[Math.max(history.length - 4, 0)] ?? latest;
-    const momentumPercent = shortBaseline === 0 ? 0 : ((latest - shortBaseline) / shortBaseline) * 100;
-    const returns = history.slice(1).map((price, index) => {
-      const base = history[index];
-      return base === 0 ? 0 : ((price - base) / base) * 100;
-    });
-    const volatilityPercent = standardDeviation(returns);
-
-    return {
-      observation: {
-        action: "HOLD",
-        type: history.length < 5 ? "WARMUP" : "OBSERVATION",
-        confidence: history.length < 5 ? 0.5 : round(clamp(0.52 + Math.min(Math.abs(momentumPercent), 1.25) * 0.04, 0.5, 0.66), 2),
-        summary: history.length < 5
-          ? `Warmup only. ${symbol} needs enough market context before the hybrid engine can score bounded candidates.`
-          : `Fallback observation only. The hybrid engine waits for full regime, volatility, and confirmation data before allowing a trade.`,
-        regime: history.length < 5 ? "Warmup" : "Observation",
-        spreadPercent: 0,
-        momentumPercent: round(momentumPercent, 3),
-        candidateCount: 0
-      },
-      candidates: []
-    };
-  }
-
   private filterCandidatesForAccountMode(
     analysis: { observation: StrategyObservation; candidates: StrategyCandidate[] },
-    accountMode: ExchangeAccountMode
+    _accountMode: ExchangeAccountMode
   ) {
-    if (accountMode !== "spot") {
-      return analysis;
-    }
-
-    const filteredCandidates = analysis.candidates.filter((candidate) => candidate.action === "LONG");
-    if (filteredCandidates.length > 0) {
-      return { ...analysis, candidates: filteredCandidates };
-    }
-
-    if (analysis.observation.action === "SHORT") {
-      return {
-        observation: {
-          ...analysis.observation,
-          action: "HOLD",
-          summary: `${analysis.observation.summary} Spot mode ignores short-side entries and stayed flat instead.`
-        },
-        candidates: []
-      };
-    }
-
-    return { ...analysis, candidates: filteredCandidates };
+    return analysis;
   }
 
   private correlatedBucket(symbol: string) {
@@ -3163,23 +2925,6 @@ class StateStore {
     if (this.hasCorrelatedExposure(snapshot, candidate.symbol, candidate.action)) {
       return `Correlated ${candidate.action} exposure is already open in the ${this.correlatedBucket(candidate.symbol)} bucket.`;
     }
-    const normalizedSymbol = candidate.symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-    const openAltcoinPositions = snapshot.positions.filter((position) => isAltcoinSymbol(position.symbol));
-    if (isAltcoinSymbol(candidate.symbol) && openAltcoinPositions.length >= 2) {
-      return "Altcoin position cap reached. The breakout engine allows at most two altcoin positions at once.";
-    }
-    if (isAltcoinSymbol(candidate.symbol) && snapshot.positions.some((position) => {
-      const normalized = position.symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      return ["BTCUSD", "XBTUSD"].includes(normalized) && position.side === "SHORT";
-    })) {
-      return "Altcoin breakout blocked while a BTC short is already open.";
-    }
-    if (["BTCUSD", "XBTUSD", "ETHUSD"].includes(normalizedSymbol) && snapshot.positions.some((position) => {
-      const normalized = position.symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      return ["BTCUSD", "XBTUSD", "ETHUSD"].includes(normalized) && position.symbol !== candidate.symbol;
-    })) {
-      return "Major-pair cap reached. The breakout engine keeps at most one BTC or ETH position open at a time.";
-    }
     if (Math.abs(context.bookImbalance) > 0.55 && ((candidate.action === "LONG" && context.bookImbalance < 0) || (candidate.action === "SHORT" && context.bookImbalance > 0))) {
       return `Order-book imbalance ${context.bookImbalance.toFixed(2)} is adverse to a ${candidate.action} entry.`;
     }
@@ -3200,7 +2945,6 @@ class StateStore {
     price: number,
     snapshot: ProofTraderSnapshot,
     tuning?: {
-      signalType?: string | null;
       sizeMultiplier?: number | null;
       stopLossPercent?: number | null;
       takeProfitPercent?: number | null;
@@ -3209,9 +2953,6 @@ class StateStore {
       liquidityUsd?: number | null;
       volatilityPercent?: number | null;
       requestedLeverage?: number | null;
-      candles5m?: OhlcCandle[] | null;
-      candles1h?: OhlcCandle[] | null;
-      marketContext?: MarketContext | null;
     }
   ) {
     const policy = snapshot.risk.policy;
@@ -3221,24 +2962,13 @@ class StateStore {
     const availableBalance = Math.max(snapshot.paper.balance, availableBalanceCard?.value ?? 0, 0);
     const totalEquity = Math.max(snapshot.paper.equity, equityCard?.value ?? availableBalance, availableBalance);
     const drawdownPenalty = clamp(1 - currentDrawdownPercent(snapshot) / 20, 0.55, 1);
-    const riskBudget = totalEquity * (Math.min(policy.perTradeRiskPercent, 1.5) / 100) * drawdownPenalty;
+    const riskBudget = totalEquity * (policy.perTradeRiskPercent / 100) * drawdownPenalty;
     const sizeMultiplier = clamp(tuning?.sizeMultiplier ?? 1, 0.55, 1.25);
     const executionQuality = clamp(tuning?.executionQuality ?? 0.8, 0.4, 1.15);
     const rawAtrPercent = clamp(tuning?.atrPercent ?? 1.1, 0.45, 4);
     const rawVolatilityPercent = clamp(tuning?.volatilityPercent ?? rawAtrPercent, 0.35, 8);
     const atrPercent = rawAtrPercent / 100;
-    const structuralLevels = tuning?.signalType
-      ? deriveStructuralExecutionLevels({
-          signalType: tuning.signalType,
-          side,
-          entryPrice: price,
-          accountMode,
-          atrPercent: rawAtrPercent,
-          candles5m: tuning.candles5m ?? undefined,
-          candles1h: tuning.candles1h ?? undefined
-        })
-      : null;
-    const requestedStopDistancePercent = clamp((tuning?.stopLossPercent ?? structuralLevels?.stopDistancePercent ?? rawAtrPercent * 2) / 100, 0.008, accountMode === "futures" ? 0.08 : 0.06);
+    const requestedStopDistancePercent = clamp((tuning?.stopLossPercent ?? rawAtrPercent * 1.15) / 100, 0.006, accountMode === "futures" ? 0.04 : 0.025);
     const volatilityPenalty = clamp(0.014 / Math.max(atrPercent, 0.0045), 0.5, 1.15);
 
     let leverage = 1;
@@ -3273,7 +3003,7 @@ class StateStore {
       stopDistancePercent = Math.max(stopDistancePercent, 0.005);
     }
 
-    const takeProfitPercent = clamp((tuning?.takeProfitPercent ?? structuralLevels?.takeProfitPercent ?? Math.max(stopDistancePercent * 300, 2.4)) / 100, Math.max(stopDistancePercent * 2.4, 0.014), 0.18);
+    const takeProfitPercent = clamp((tuning?.takeProfitPercent ?? Math.max(stopDistancePercent * 220, accountMode === "futures" ? 1.6 : 1.8)) / 100, Math.max(stopDistancePercent * 1.5, 0.012), 0.05);
     const notionalFromRisk = riskBudget / Math.max(stopDistancePercent, 0.001);
     const configuredNotional = Math.max(snapshot.strategy.runner.tradeSizeUsd * sizeMultiplier * executionQuality * volatilityPenalty, 0);
     const liquidityCap = tuning?.liquidityUsd ? tuning.liquidityUsd * 0.08 : Number.POSITIVE_INFINITY;
@@ -3284,8 +3014,8 @@ class StateStore {
     const size = round(rawSize, price >= 1000 ? 6 : 4);
     const notional = round(size * price, 2);
     const collateral = round(accountMode === "futures" ? notional / Math.max(leverage, 1) : notional, 2);
-    const stopLoss = round(structuralLevels?.stopLoss ?? (price * (side === "LONG" ? 1 - stopDistancePercent : 1 + stopDistancePercent)), 2);
-    const takeProfit = round(structuralLevels?.takeProfit ?? (price * (side === "LONG" ? 1 + takeProfitPercent : 1 - takeProfitPercent)), 2);
+    const stopLoss = round(price * (side === "LONG" ? 1 - stopDistancePercent : 1 + stopDistancePercent), 2);
+    const takeProfit = round(price * (side === "LONG" ? 1 + takeProfitPercent : 1 - takeProfitPercent), 2);
     liquidationPrice = calculateLiquidationPrice(price, side, leverage, accountMode);
     liquidationDistancePercent = calculateLiquidationDistancePercent(price, liquidationPrice);
 
@@ -3490,7 +3220,7 @@ class StateStore {
     this.ensureRunnerState(snapshot);
 
     const now = new Date().toISOString();
-    snapshot.strategy.selectedStrategy = "Hybrid Continuation + Breakout Execution";
+    snapshot.strategy.selectedStrategy = "AI Regime & Execution Strategist";
     snapshot.strategy.runner.lastRunAt = now;
     snapshot.strategy.runner.status = snapshot.strategy.runner.enabled ? "Running" : "Stopped";
 
@@ -3515,7 +3245,7 @@ class StateStore {
     snapshot.strategy.runner.watchedSymbols = watchedSymbols;
 
     const accountMode = snapshot.settings.exchange.accountMode ?? "spot";
-    const confidenceThreshold = Math.max(snapshot.strategy.runner.confidenceThreshold, 0.7);
+    const confidenceThreshold = snapshot.strategy.runner.confidenceThreshold;
     const attributionByMode = {
       spot: buildModeAttribution("spot", snapshot.trades, snapshot.positions),
       futures: buildModeAttribution("futures", snapshot.trades, snapshot.positions)
@@ -3714,7 +3444,6 @@ class StateStore {
     const candidates: StrategyCandidate[] = [];
     const marketContextBySymbol = new Map<string, MarketContext>();
     const marketContextByCandidateId = new Map<string, MarketContext>();
-    const btcMacroRegime = await this.fetchBtcMacroRegime();
 
     for (const symbol of watchedSymbols) {
       const ticker = await krakenCliService.ticker(symbol);
@@ -3747,7 +3476,7 @@ class StateStore {
 
         if (candles1m.length >= 24 && candles3m.length >= 24 && candles5m.length >= 10 && candles15m.length >= 14 && candles30m.length >= 14 && candles1h.length >= 10) {
           marketContext = this.buildMarketContext(symbol, price, candles1m, candles3m, candles5m, candles15m, candles30m, candles1h, depthMetrics);
-          analysis = this.filterCandidatesForAccountMode(this.buildExecutionAwareCandidates(symbol, marketContext, btcMacroRegime), accountMode);
+          analysis = this.filterCandidatesForAccountMode(this.buildExecutionAwareCandidates(symbol, marketContext), accountMode);
           marketContextBySymbol.set(symbol, marketContext);
         }
       } catch (error) {
@@ -5175,7 +4904,7 @@ class StateStore {
       return { ok: false, reason: "Symbol not whitelisted by risk policy.", riskScore: 0.91 };
     }
 
-    if (snapshot.positions.length >= Math.min(policy.maxConcurrentPositions, 3)) {
+    if (snapshot.positions.length >= policy.maxConcurrentPositions) {
       return { ok: false, reason: "Max concurrent positions reached.", riskScore: 0.87 };
     }
 
